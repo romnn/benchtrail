@@ -1,0 +1,596 @@
+/*
+ * Every color is a role token, so light and dark mode swap in one place.
+ * The chart script reads the same tokens, which keeps the charts and the page in step.
+ *
+ * Series colors are system hues stepped until the set passes lightness, chroma, and color-vision
+ * checks on each mode's background, in this order; reorder or replace them only after re-running
+ * those checks.
+ * Worse and better are reserved for regressions and improvements and never stand in for a series.
+ */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --hover: #f5f5f7;
+  --ink: #1d1d1f;
+  --ink-2: #424245;
+  --muted: #6e6e73;
+  --grid: #f0f0f2;
+  --rule: #e5e5ea;
+  --axis: #c7c7cc;
+  --accent: #007aff;
+  --worse: #ff3b30;
+  --worse-text: #d70015;
+  --better: #34c759;
+  --better-text: #248a3d;
+  --noise: #d1d1d6;
+  --s1: #007aff;
+  --s2: #f28a00;
+  --s3: #00a9a1;
+  --s4: #ff2d55;
+  --s5: #5856d6;
+  --s6: #d4a000;
+  --s7: #af52de;
+  --s8: #a86a2c;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #111113;
+    --hover: #1c1c1e;
+    --ink: #f5f5f7;
+    --ink-2: #c7c7cc;
+    --muted: #98989d;
+    --grid: #1f1f22;
+    --rule: #2c2c2e;
+    --axis: #48484a;
+    --accent: #0a84ff;
+    --worse: #ff453a;
+    --worse-text: #ff6961;
+    --better: #30d158;
+    --better-text: #30d158;
+    --noise: #3a3a3c;
+    --s1: #0a84ff;
+    --s2: #d67800;
+    --s3: #139e96;
+    --s4: #ff375f;
+    --s5: #6a68ee;
+    --s6: #b38a00;
+    --s7: #bf5af2;
+    --s8: #b87838;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111113;
+  --hover: #1c1c1e;
+  --ink: #f5f5f7;
+  --ink-2: #c7c7cc;
+  --muted: #98989d;
+  --grid: #1f1f22;
+  --rule: #2c2c2e;
+  --axis: #48484a;
+  --accent: #0a84ff;
+  --worse: #ff453a;
+  --worse-text: #ff6961;
+  --better: #30d158;
+  --better-text: #30d158;
+  --noise: #3a3a3c;
+  --s1: #0a84ff;
+  --s2: #d67800;
+  --s3: #139e96;
+  --s4: #ff375f;
+  --s5: #6a68ee;
+  --s6: #b38a00;
+  --s7: #bf5af2;
+  --s8: #b87838;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Layout rules below set display, which would otherwise override the hidden attribute. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 var(--font);
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: var(--axis);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sha {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 56px 40px 72px;
+}
+
+/* Header */
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.top h1 {
+  font-size: 22px;
+  letter-spacing: -0.015em;
+}
+
+.top h1 a {
+  text-decoration: none;
+}
+
+.top h1 a:hover {
+  color: inherit;
+}
+
+.meta {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.theme {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.theme:hover {
+  color: var(--ink);
+}
+
+.suites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin-top: 32px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px 32px;
+  margin-top: 20px;
+}
+
+.filters,
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 32px;
+}
+
+.options {
+  margin-top: 14px;
+}
+
+.filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+
+.filter-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Options are plain text: the current one is ink, the rest are muted. */
+.option {
+  color: var(--muted);
+  transition: color 120ms ease;
+}
+
+.option:hover {
+  color: var(--ink);
+}
+
+.option[aria-checked="true"],
+.option[aria-pressed="true"],
+.option[aria-selected="true"],
+.option[aria-expanded="true"] {
+  color: var(--ink);
+}
+
+.option[aria-checked="true"],
+.option[aria-selected="true"] {
+  font-weight: 600;
+}
+
+.suites .option {
+  font-size: 15px;
+}
+
+.line-key {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-right: 7px;
+  border-radius: 1px;
+  vertical-align: middle;
+  background: var(--key);
+  transition: opacity 120ms ease;
+}
+
+.line-key.dashed {
+  background: repeating-linear-gradient(90deg, var(--key) 0 4px, transparent 4px 7px);
+}
+
+.option[aria-pressed="false"] .line-key {
+  opacity: 0.25;
+}
+
+/* Sections */
+
+main {
+  display: grid;
+  gap: 56px;
+  margin-top: 40px;
+}
+
+.trail-chart {
+  height: 112px;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+  gap: 48px 56px;
+}
+
+.chart-card {
+  min-width: 0;
+}
+
+.chart-card h2 {
+  font-size: 14px;
+}
+
+.chart-card .note {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.chart {
+  height: 260px;
+  margin-top: 12px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* Details: one fixed shape for every run, so hovering never moves the layout */
+
+.details {
+  max-width: 760px;
+}
+
+.run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.run-head .facts {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.run-head .step {
+  color: var(--muted);
+}
+
+.run-head .step:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.run-head .step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.run-subject {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: calc(2 * 1.4em);
+  margin: 10px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.run-body {
+  max-height: 12em;
+  overflow: auto;
+  margin: 12px 0 0;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.run-extra {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+/* Tables */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  padding: 8px 0 8px 32px;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+th:first-child,
+td:first-child {
+  padding-left: 0;
+  text-align: left;
+}
+
+thead th {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  border-bottom: 1px solid var(--rule);
+}
+
+tbody tr + tr td {
+  border-top: 1px solid var(--grid);
+}
+
+.run-table {
+  width: 100%;
+  margin-top: 20px;
+  table-layout: fixed;
+}
+
+.run-table col.num {
+  width: 18%;
+}
+
+.run-table .group td {
+  padding-top: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  border-top: 0;
+}
+
+.run-table td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.details:not(.is-expanded) .more-only {
+  display: none;
+}
+
+.more-toggle {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.more-toggle:hover {
+  color: var(--ink);
+}
+
+.change {
+  display: inline-block;
+  min-width: 6ch;
+  color: var(--muted);
+}
+
+/* A change carries a sign and an arrow, so color is never its only cue. */
+.change.worse {
+  color: var(--worse-text);
+}
+
+.change.better {
+  color: var(--better-text);
+}
+
+.change .icon {
+  display: inline-block;
+  width: 1.1em;
+  font-size: 0.75em;
+}
+
+/* Runs list */
+
+.history-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px 32px;
+}
+
+.search {
+  font: inherit;
+  width: min(100%, 260px);
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+}
+
+.search:focus {
+  outline: 0;
+  border-bottom-color: var(--accent);
+}
+
+.search::placeholder {
+  color: var(--muted);
+}
+
+#history {
+  margin-top: 20px;
+}
+
+.history-table {
+  width: 100%;
+}
+
+.history-table td:first-child {
+  white-space: normal;
+  min-width: 280px;
+  max-width: 520px;
+  overflow-wrap: anywhere;
+}
+
+.history-table td .change {
+  display: block;
+  font-size: 12.5px;
+}
+
+.history-table tbody tr {
+  cursor: pointer;
+}
+
+.history-table tbody tr:hover td {
+  background: var(--hover);
+}
+
+.history-table tbody tr[aria-selected="true"] td {
+  background: var(--hover);
+}
+
+.row-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.more {
+  margin-top: 16px;
+  color: var(--muted);
+}
+
+.more:hover {
+  color: var(--ink);
+}
+
+.empty-row td {
+  color: var(--muted);
+}
+
+.problem {
+  margin-top: 40px;
+}
+
+.problem p {
+  margin: 6px 0 0;
+  color: var(--ink-2);
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 32px 16px 48px;
+  }
+
+  main {
+    gap: 44px;
+    margin-top: 32px;
+  }
+
+  .suites {
+    margin-top: 24px;
+  }
+
+  .filters,
+  .options {
+    gap: 10px 20px;
+  }
+
+  th,
+  td {
+    padding-left: 16px;
+  }
+
+  .run-table col.num {
+    width: 24%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
