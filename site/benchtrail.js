@@ -602,9 +602,8 @@ function resetSectionUi() {
 function renderFilters() {
   segmented("range", RANGES, link.range, (key) => dispatch({ type: "range", range: key }));
   segmented("scale", SCALES, link.scale, (key) => dispatch({ type: "set", changes: { scale: key } }));
-  // The window keeps its place on the axis, so after a change of axis it covers the runs found at
-  // the same positions on the new one.
-  segmented("axis", AXES, link.axis, (key) => dispatch({ type: "set", changes: { axis: key, window: windowAt(zoom(), key) } }));
+  // The window names runs, so a change of axis keeps the same runs in view.
+  segmented("axis", AXES, link.axis, (key) => dispatch({ type: "set", changes: { axis: key } }));
   segmented("smooth", SMOOTHING, smoothing(), (key) => dispatch({ type: "set", changes: { smoothing: { kind: "explicit", window: key } } }));
   renderTheme();
   segmented("readout", READOUTS, link.more ? "detailed" : "basic", (key) => dispatch({ type: "set", changes: { more: key === "detailed" } }));
@@ -1517,7 +1516,7 @@ function createChart(dom) {
       if (syncingZoom) return;
       const moved = event.batch?.[0] ?? event;
       if (!Number.isFinite(moved.start) || !Number.isFinite(moved.end)) return;
-      ui.gesture = { start: moved.start, end: moved.end, window: link.window };
+      ui.gesture = { start: moved.start, end: moved.end, window: link.window, axis: link.axis };
       syncZoom(instance);
       clearTimeout(zoomTimer);
       // Once the gesture pauses, its window is committed to the link as the runs at its ends.
@@ -2651,10 +2650,10 @@ function runAtPercent(percent, axis = link.axis) {
   return runs.reduce((best, run) => (Math.abs(run.date - target) < Math.abs(best.date - target) ? run : best));
 }
 
-// The zoom window in percent of the x axis: as a gesture left it, until the link's window changes
-// for another reason, otherwise the positions of the runs the link names.
+// The zoom window in percent of the x axis: as a gesture left it, until the link's window or axis
+// changes for another reason, otherwise the positions of the runs the link names.
 function zoom() {
-  if (ui.gesture && ui.gesture.window === link.window) return ui.gesture;
+  if (ui.gesture && ui.gesture.window === link.window && ui.gesture.axis === link.axis) return ui.gesture;
   const window = link.window;
   if (window.kind === "full" || view.runs.length === 0) return { start: 0, end: 100 };
   const position = (key) => view.runs.findIndex((run) => run.key === key);
