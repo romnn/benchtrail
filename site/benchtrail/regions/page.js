@@ -18,7 +18,7 @@
  * @property {import("../core/history.js").Suite} suite
  * @property {import("../core/history.js").Section} section
  * @property {{ repoUrl?: string }} data
- * @property {{ title: string | null, threshold: number }} config
+ * @property {import("../core/config.js").Config} config
  * @property {MediaQueryList} narrow whether the page is laid out for a narrow screen
  * @property {(action: import("../core/selection.js").Action, draw?: () => void) => void} dispatch
  * @property {(action: import("../core/selection.js").Navigation) => void} go opens the page a navigation leads to

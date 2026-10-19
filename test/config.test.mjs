@@ -113,3 +113,27 @@ test("a suite's value that breaks a rule leaves the top-level value in force", (
   assert.deepEqual(suiteSettings(config, "other").problems, ["The setting `suites.other` must be an object."]);
   assert.equal(settings.problems.length, 2);
 });
+
+test("links lead to the page's own site or to http(s) addresses", () => {
+  const config = readConfig({
+    links: [
+      { label: "Documentation", url: "../" },
+      { label: "Repository", url: "https://github.com/romnn/benchtrail" },
+      { label: "Script", url: "javascript:alert(1)" },
+      { label: "Mail", url: "mailto:a@b.c", target: "_blank" },
+      "Home",
+    ],
+  });
+  assert.deepEqual(config.links, [
+    { label: "Documentation", url: "../" },
+    { label: "Repository", url: "https://github.com/romnn/benchtrail" },
+  ]);
+  assert.deepEqual(messages(config), [
+    "The setting `links[2].url` must be a relative address or an http(s) one.",
+    "The setting `links[3].target` is not a link setting.",
+    "The setting `links[3].url` must be a relative address or an http(s) one.",
+    'The setting `links[4]` must be an object with a "label" and a "url".',
+  ]);
+  // Links belong to the page, so a suite cannot set its own.
+  assert.match(messages(readConfig({ suites: { main: { links: [] } } }))[0], /applies to the whole page/);
+});

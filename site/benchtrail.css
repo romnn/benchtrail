@@ -197,9 +197,21 @@ button {
 
 /* Settings: a gear in the header over a panel of display choices */
 
+/* The project's own links, such as its documentation, sit at the end of the row before the settings. */
+.site-links {
+  display: flex;
+  gap: 16px;
+  margin-left: auto;
+  font-size: 13px;
+}
+
 .settings {
   position: relative;
   margin-left: auto;
+}
+
+.site-links:not([hidden]) + .settings {
+  margin-left: 0;
 }
 
 .icon-button {

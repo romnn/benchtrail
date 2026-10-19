@@ -121,8 +121,10 @@ function shownRegions() {
 async function boot() {
   window.addEventListener("error", (event) => reportFailure(event.error ?? event.message));
   window.addEventListener("unhandledrejection", (event) => reportFailure(event.reason));
-  // The theme can be changed even when the history fails to load.
+  // The theme and the project's links work even when the history fails to load.
   regions.header.wireTheme();
+  config = await loadConfig();
+  regions.header.renderLinks();
   if (!echarts) {
     showProblem(
       "The chart library did not load",
@@ -130,7 +132,6 @@ async function boot() {
     );
     return;
   }
-  config = await loadConfig();
   runtime = createRuntime(echarts, {
     view: () => view,
     axis: () => link.axis,

@@ -38,6 +38,14 @@ export function headerRegion(page) {
     projectName = name;
   }
 
+  // The project's links from the settings, drawn before the history loads, so they lead back to the
+  // rest of the site even when the dashboard has nothing to show.
+  function renderLinks() {
+    const nav = /** @type {HTMLElement} */ (document.getElementById("site-links"));
+    nav.replaceChildren(...page.config.links.map((link) => h("a", { href: link.url }, link.label)));
+    nav.hidden = page.config.links.length === 0;
+  }
+
   // The browser tab names the page before the project, so tabs of one project stay apart.
   function renderTitle() {
     const route = page.link.route;
@@ -423,5 +431,5 @@ export function headerRegion(page) {
     renderSummary();
   }
 
-  return { roots: [], render, renderMasthead, wireTheme, wire, reset };
+  return { roots: [], render, renderMasthead, renderLinks, wireTheme, wire, reset };
 }

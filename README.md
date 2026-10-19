@@ -108,6 +108,9 @@ Every key is optional, and without the file the defaults apply:
 ```
 
 - `title` replaces the heading, which defaults to the repository name from the history.
+- `links` lists links the heading row shows, each `{ "label", "url" }`, such as one back to the
+  documentation the dashboard sits in.
+  A `url` is relative to the page, such as `../`, or an absolute http(s) address.
 - `dataUrl` points at the history script, `data.js` by default.
   A `?data=` query parameter overrides it with a same-origin path to a `.js` file, made of letters,
   digits, `_`, `.`, `/` and `-`.
