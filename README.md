@@ -30,23 +30,24 @@ git add dev/bench && git commit -m "Add the benchtrail dashboard" && git push
 The archive holds `index.html`, `benchtrail.css`, `benchtrail.js`, and the `benchtrail/` directory
 of modules it loads.
 To upgrade later, replace all of them, since a release may change the page's markup and its pinned
-ECharts build, then copy your settings block from the old `index.html` into the new one.
+ECharts build.
+Your settings live in `benchtrail.json`, which the archive does not hold, so an upgrade leaves them
+as they are.
 
 ### Settings
 
-`index.html` carries a JSON block that configures the page; every key is optional:
+`benchtrail.json` beside `index.html` configures the page.
+Every key is optional, and without the file the defaults apply:
 
-```html
-<script id="benchtrail-config" type="application/json">
-  {
-    "title": "My project benchmarks",
-    "threshold": 0.05,
-    "names": "^(?<document>[^.]+)\\.(?<strategy>\\S+) (?<metric>.+)$",
-    "label": "{{document}} / {{strategy}}",
-    "metrics": { "cpu": { "label": "CPU time", "direction": "lower" } },
-    "suites": { "Throughput": { "colorBy": "parser" } }
-  }
-</script>
+```json
+{
+  "title": "My project benchmarks",
+  "threshold": 0.05,
+  "names": "^(?<document>[^.]+)\\.(?<strategy>\\S+) (?<metric>.+)$",
+  "label": "{{document}} / {{strategy}}",
+  "metrics": { "cpu": { "label": "CPU time", "direction": "lower" } },
+  "suites": { "Throughput": { "colorBy": "parser" } }
+}
 ```
 
 - `title` replaces the heading, which defaults to the repository name from the history.
@@ -63,13 +64,15 @@ The remaining keys apply to every suite at the top level, or to one suite under 
   name; a group called `metric` names the metric.
 - `label` is a template for a benchmark's label.
 - `metrics` maps a metric id to `{ "label", "direction": "lower" | "higher", "unit" }`.
-- `dimensions` maps a dimension name to `{ "label", "order" }`.
+- `dimensions` maps a dimension name to `{ "label", "order" }`; dimensions with a lower `order`
+  come first.
 - `colorBy` and `dashBy` name the dimension that colors or dashes the lines by default.
 - `ignoreEnvironment` lists environment names whose changes still allow comparing runs.
 - `smoothing` is the default smoothing window in runs: `0` (off, the default), `5`, `11` or `21`.
   Charts then draw the rolling median as a line over the raw values.
 
-The comment above the block in `index.html` is the reference for these keys.
+A value that breaks these rules, or a key that is not a setting, is left out and listed among
+each affected suite's problems, so the page still draws with the rest.
 
 ### Links
 
@@ -163,8 +166,9 @@ checks and scripts below.
 `site/benchtrail.js` loads the history and draws the page the link opens.
 The modules it loads keep the browser at the edge:
 
-- `benchtrail/core/` reads the history, detects changes, reads and writes links, and builds the
-  view and chart options; it touches no browser API, so the Node tests cover it directly.
+- `benchtrail/core/` reads the settings and the history, detects changes, reads and writes links,
+  and builds the view and chart options; it touches no browser API, so the Node tests cover it
+  directly.
 - `benchtrail/regions/` draws each part of a page, such as the header, the charts, or the run list.
 - `benchtrail/chart-runtime.js` owns the ECharts instances and syncs zoom and hover between them.
 

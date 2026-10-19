@@ -6,7 +6,7 @@
 import { median, relative } from "./detect.js";
 import { valueText } from "./history.js";
 import { linkPart, MISSING, token, unlinkPart, urlText } from "./identity.js";
-import { admits, RANGES, SMOOTHING } from "./link.js";
+import { admits, RANGES } from "./link.js";
 import { compareOrder, unique } from "./list.js";
 
 /** @typedef {import("./detect.js").Judgement} Judgement */
@@ -217,22 +217,13 @@ export function chartScope(link) {
 }
 
 /**
- * The suite's configured smoothing window, when it is one of the offered sizes.
- * @param {Suite} suite
- */
-export function defaultSmoothing(suite) {
-  const configured = Number(suite.settings.smoothing ?? 0);
-  return SMOOTHING.some((option) => option.key === configured) ? configured : 0;
-}
-
-/**
  * The smoothing window in effect: the link's explicit choice, or the suite's default, so a page
  * that never chose follows each suite's own default.
  * @param {Suite} suite
  * @param {LinkState} link
  */
 export function smoothingWindow(suite, link) {
-  return link.smoothing.kind === "explicit" ? link.smoothing.window : defaultSmoothing(suite);
+  return link.smoothing.kind === "explicit" ? link.smoothing.window : suite.settings.smoothing;
 }
 
 // Settles a link against the data, so it names only what can apply and leaves out what follows
@@ -274,7 +265,7 @@ export function settle(suites, next) {
   if (next.color.kind === "by" && next.color.key !== pivot.color) settled.color = { kind: "auto" };
   if (next.dash.kind === "by" && next.dash.key !== pivot.dash) settled.dash = { kind: "auto" };
 
-  if (next.smoothing.kind === "explicit" && next.smoothing.window === defaultSmoothing(suite)) settled.smoothing = { kind: "configured" };
+  if (next.smoothing.kind === "explicit" && next.smoothing.window === suite.settings.smoothing) settled.smoothing = { kind: "configured" };
 
   // Run and window
   const runs = rangeRuns(suite, next.range);

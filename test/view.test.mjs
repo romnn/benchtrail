@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildSuite, readSettings, suiteSettings } from "../site/benchtrail/core/history.js";
+import { readConfig, suiteSettings } from "../site/benchtrail/core/config.js";
+import { buildSuite } from "../site/benchtrail/core/history.js";
 import { formatLink, parseLink } from "../site/benchtrail/core/link.js";
 import { buildView, chartId, chartScope, rankMovers, settle } from "../site/benchtrail/core/view.js";
 
@@ -22,7 +23,7 @@ function entry(name, value, payload) {
  * @param {Record<string, unknown[][]>} bySuite
  */
 function suites(bySuite) {
-  const settings = readSettings({});
+  const settings = readConfig({});
   return Object.entries(bySuite).map(([name, runs]) =>
     buildSuite(
       name,

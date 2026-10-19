@@ -12,26 +12,7 @@ import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
 /** @typedef {import("./detect.js").Shift} Shift */
 /** @typedef {import("./identity.js").Scalar} Scalar */
 /** @typedef {import("./identity.js").Tags} Tags */
-
-/**
- * The page config's settings for reading runs: the detection threshold, the settings every suite
- * shares, and each suite's own, still unchecked.
- * @typedef {{ threshold: number, defaults: Record<string, unknown>, suites: Record<string, unknown> }} PageSettings
- */
-
-/**
- * One suite's settings, merged and checked.
- * @typedef {object} SuiteSettings
- * @property {RegExp | null} names
- * @property {unknown} [label]
- * @property {Record<string, { label?: string, direction?: string, unit?: unknown }>} metrics
- * @property {Record<string, { label?: unknown, order?: unknown }>} dimensions
- * @property {unknown} [colorBy]
- * @property {unknown} [dashBy]
- * @property {Set<string>} ignoreEnvironment
- * @property {unknown} [smoothing]
- * @property {string | null} namesError why the configured name pattern was ignored, if it was
- */
+/** @typedef {import("./config.js").SuiteSettings} SuiteSettings */
 
 /**
  * A recorded run: one commit's benchmark results.
@@ -156,61 +137,9 @@ import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
 /** @typedef {Reading & { index: number, entry: Record<string, unknown>, tool: unknown, unit: string }} Observation */
 /** @typedef {(message: string) => void} Note */
 
-// Settings a config may give for every suite at its top level, or for one suite under `suites`.
-/** @type {readonly string[]} */
-const SETTING_KEYS = ["names", "label", "metrics", "dimensions", "colorBy", "dashBy", "ignoreEnvironment", "smoothing"];
-
 // Tools whose values github-action-benchmark treats as "bigger is better"; every other tool
 // records times or sizes.
 const BIGGER_IS_BETTER = new Set(["customBiggerIsBetter", "benchmarkjs", "pytest"]);
-
-// The parts of the page config that shape how runs are read: the detection threshold, the
-// settings for every suite, and each suite's own.
-/**
- * @param {Record<string, unknown>} raw
- * @returns {PageSettings}
- */
-export function readSettings(raw) {
-  /** @type {Record<string, unknown>} */
-  const defaults = {};
-  for (const key of SETTING_KEYS) if (raw[key] !== undefined) defaults[key] = raw[key];
-  return {
-    threshold: Number.isFinite(Number(raw.threshold)) ? Number(raw.threshold) : 0.05,
-    defaults,
-    suites: isPlainObject(raw.suites) ? raw.suites : {},
-  };
-}
-
-// A suite's own settings override the top-level ones; metric and dimension entries merge by key.
-// `defaults` holds the top-level settings and `suites` each suite's own, as the page config gives
-// them.
-/**
- * @param {PageSettings} settings
- * @param {string} name
- * @returns {SuiteSettings}
- */
-export function suiteSettings({ defaults, suites }, name) {
-  const own = plainObject(suites[name]);
-  const merged = { ...defaults, ...own };
-  const ignored = merged.ignoreEnvironment;
-  /** @type {RegExp | null} */
-  let names = null;
-  /** @type {string | null} */
-  let namesError = null;
-  try {
-    if (merged.names) names = new RegExp(String(merged.names));
-  } catch {
-    namesError = `the name pattern for ${name} is not a valid regular expression, so benchmark names are read as they are`;
-  }
-  return {
-    ...merged,
-    names,
-    namesError,
-    metrics: /** @type {SuiteSettings["metrics"]} */ ({ ...plainObject(defaults.metrics), ...plainObject(own.metrics) }),
-    dimensions: /** @type {SuiteSettings["dimensions"]} */ ({ ...plainObject(defaults.dimensions), ...plainObject(own.dimensions) }),
-    ignoreEnvironment: new Set(Array.isArray(ignored) ? ignored.map(String) : []),
-  };
-}
 
 // Reads one recorded entry into its benchmark identity, dimensions, metric, and environment.
 // The action stores `extra` as a string, so typed metadata arrives as JSON text.
@@ -387,7 +316,7 @@ export function buildSuite(name, rawRuns, settings, threshold) {
   const problems = new Map();
   /** @type {Note} */
   const note = (message) => problems.set(message, (problems.get(message) ?? 0) + 1);
-  if (settings.namesError) note(settings.namesError);
+  for (const problem of settings.problems) note(problem);
   const valid = rawRuns.filter(isPlainObject);
   if (valid.length < rawRuns.length) note(`${rawRuns.length - valid.length} recorded runs are not objects and are skipped.`);
   const runs = valid.map((raw, index) => normalizeRun(raw, index));
@@ -520,9 +449,10 @@ function metricFor(metrics, id, unit, settings) {
   const key = `${id}\u0000${family}`;
   let metric = metrics.get(key);
   if (!metric) {
-    const preferred = settings.metrics[id]?.unit;
-    const target = typeof preferred === "string" ? parseUnit(preferred) : null;
-    const canonicalUnit = target && parsed && target.family === parsed.family && target.tail === parsed.tail ? String(preferred) : unit;
+    // A configured unit of the same family becomes the metric's unit, so its values convert to it.
+    const preferred = settings.metrics.get(id)?.unit ?? unit;
+    const target = parseUnit(preferred);
+    const canonicalUnit = target && parsed && target.family === parsed.family && target.tail === parsed.tail ? preferred : unit;
     metric = { key, id, unit: canonicalUnit, rowLabel: null, explicit: new Set(), implied: new Set(), direction: "lower", label: "", slug: "" };
     metrics.set(key, metric);
   }
@@ -538,20 +468,20 @@ function metricFor(metrics, id, unit, settings) {
  */
 function resolveMetrics(metrics, settings, note) {
   for (const metric of metrics.values()) {
-    const configured = settings.metrics[metric.id] ?? {};
+    const configured = settings.metrics.get(metric.id) ?? {};
     const name = metric.id || metric.unit || "values";
     if (metric.explicit.size === 1) {
       metric.direction = [...metric.explicit][0];
     } else if (metric.explicit.size > 1) {
       metric.direction = "unknown";
       note(`metric ${name} declares conflicting directions; its changes are shown without a verdict.`);
-    } else if (configured.direction === "lower" || configured.direction === "higher") {
+    } else if (configured.direction) {
       metric.direction = configured.direction;
     } else if (metric.implied.size === 1) {
       metric.direction = [...metric.implied][0];
     } else {
       metric.direction = "unknown";
-      note(`metric ${name} was recorded by tools with opposite directions; set its direction in the config.`);
+      note(`metric ${name} was recorded by tools with opposite directions; set its direction in benchtrail.json.`);
     }
     metric.label = configured.label ?? metric.rowLabel ?? metricLabel(metric.id, metric.unit);
   }
@@ -717,7 +647,7 @@ function buildSection(histories, settings) {
 
   // Dimensions in config order, then in order of first appearance.
   const keys = unique(histories.flatMap((history) => [...history.keys]));
-  const order = (/** @type {string} */ key) => Number(settings.dimensions[key]?.order ?? Infinity);
+  const order = (/** @type {string} */ key) => settings.dimensions.get(key)?.order ?? Infinity;
   keys.sort((a, b) => order(a) - order(b));
 
   const dims = keys.map((key) => {
@@ -793,7 +723,7 @@ function traceIdentity(trace) {
  * @param {Section} section
  */
 function traceLabel(trace, section) {
-  const template = typeof section.settings.label === "string" ? section.settings.label : null;
+  const template = section.settings.label;
   if (template) {
     const names = [...template.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
     if (names.length && names.every((name) => Object.hasOwn(trace.dims, name))) {
@@ -849,8 +779,7 @@ function metricLabel(id, unit) {
  * @param {SuiteSettings} settings
  */
 function dimensionLabel(key, settings) {
-  const label = settings.dimensions[key]?.label;
-  return typeof label === "string" && label ? label : humanize(key);
+  return settings.dimensions.get(key)?.label || humanize(key);
 }
 
 /** @param {string} id */

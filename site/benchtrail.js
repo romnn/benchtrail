@@ -12,7 +12,8 @@
 
 import { createRuntime } from "./benchtrail/chart-runtime.js";
 import { yRange } from "./benchtrail/core/chart-option.js";
-import { buildSuite, readSettings, suiteSettings } from "./benchtrail/core/history.js";
+import { readConfig, suiteSettings } from "./benchtrail/core/config.js";
+import { buildSuite } from "./benchtrail/core/history.js";
 import { formatLink, parseLink } from "./benchtrail/core/link.js";
 import { reduce } from "./benchtrail/core/selection.js";
 import { buildView, SLOTS, settle, smoothingWindow } from "./benchtrail/core/view.js";
@@ -29,7 +30,6 @@ import { trailRegion } from "./benchtrail/regions/trail.js";
 
 const echarts = window.echarts;
 
-const config = readConfig();
 const narrow = matchMedia("(max-width: 720px)");
 
 // What the page shows, as its link says it.
@@ -38,6 +38,8 @@ const narrow = matchMedia("(max-width: 720px)");
 /** @type {import("./benchtrail/core/link.js").LinkState} */
 let link = parseLink(location.search);
 
+/** @type {import("./benchtrail/core/config.js").Config} */
+let config = readConfig({});
 let data = null;
 let suites = [];
 let suite = null;
@@ -66,7 +68,9 @@ const page = {
   get data() {
     return data;
   },
-  config,
+  get config() {
+    return config;
+  },
   narrow,
   dispatch,
   go,
@@ -126,6 +130,7 @@ async function boot() {
     );
     return;
   }
+  config = await loadConfig();
   runtime = createRuntime(echarts, {
     view: () => view,
     axis: () => link.axis,
@@ -145,7 +150,7 @@ async function boot() {
   });
   document.getElementById("summary").textContent = "Loading benchmark history…";
   try {
-    data = await loadHistory(config.dataUrl);
+    data = await loadHistory(historyUrl());
   } catch (error) {
     showProblem("The benchmark history did not load", error.message);
     return;
@@ -172,25 +177,35 @@ async function boot() {
 
 // Configuration and loading
 
-function readConfig() {
-  let raw = {};
+// The settings in `benchtrail.json` beside the page.
+// Without the file the defaults apply; a file that does not load or read as settings is reported
+// with the suites' problems, and the page draws with the defaults or with the settings that hold.
+async function loadConfig() {
+  let problem;
   try {
-    raw = JSON.parse(document.getElementById("benchtrail-config")?.textContent || "{}");
+    const response = await fetch("benchtrail.json");
+    if (response.status === 404) return readConfig({});
+    if (response.ok) return readConfig(await response.json());
+    problem = `benchtrail.json did not load (HTTP ${response.status}), so the default settings apply.`;
   } catch (error) {
-    console.warn("benchtrail: ignoring the config block because it is not valid JSON", error);
+    problem = `benchtrail.json did not load or is not valid JSON, so the default settings apply: ${error.message}`;
   }
+  const defaults = readConfig({});
+  defaults.problems.push({ suite: null, message: problem });
+  return defaults;
+}
+
+// The history to load: a `?data=` path from the link when it is safe to load, otherwise the one
+// the settings name.
+function historyUrl() {
   const fromQuery = new URLSearchParams(location.search).get("data");
-  return {
-    title: raw.title ?? null,
-    // The history is loaded as a script, so a URL from the query string must stay on this origin;
-    // otherwise any link to the page could run foreign code on it.
-    dataUrl: fromQuery && safeDataPath(fromQuery) ? fromQuery : (raw.dataUrl ?? "data.js"),
-    ...readSettings(raw),
-  };
+  // The history is loaded as a script, so a URL from the query string must stay on this origin;
+  // otherwise any link to the page could run foreign code on it.
+  return fromQuery && safeDataPath(fromQuery) ? fromQuery : (config.dataUrl ?? "data.js");
 }
 
 // A data path from the query string must be a relative path to a .js file on this origin; the
-// page config may name any source, since its author controls the page.
+// settings may name any source, since their author controls the page.
 function safeDataPath(url) {
   return /^[\w./-]+\.js$/.test(url) && !url.includes("//") && sameOrigin(url);
 }
@@ -215,7 +230,7 @@ function loadHistory(url) {
     script.onerror = () =>
       reject(
         new Error(
-          `Could not load ${url}. Check that github-action-benchmark has pushed its history next to this page, or point "dataUrl" in the page's config block at it.`,
+          `Could not load ${url}. Check that github-action-benchmark has pushed its history next to this page, or point "dataUrl" in benchtrail.json at it.`,
         ),
       );
     document.head.append(script);

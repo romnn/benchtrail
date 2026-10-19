@@ -23,30 +23,6 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <!--
-      Page settings, all optional:
-      - "title": heading text; defaults to the repository name from the data.
-      - "dataUrl": the history script; a `?data=` query parameter naming a same-origin `.js` path
-        overrides it.
-      - "threshold": the smallest relative change that can count as a regression or improvement;
-        a shift must also stand out from the benchmark's own noise.
-
-      These apply to every suite at the top level, or to one suite under "suites": { "<name>": { … } }:
-      - "names": regex whose named groups read dimensions out of an untyped benchmark name; a group
-        called `metric` names the metric, e.g. "^(?<document>[^.]+)\\.(?<strategy>\\S+) (?<metric>.+)$".
-      - "label": template for a benchmark's label, e.g. "{{document}} / {{strategy}}".
-      - "metrics": by metric id, { "label", "direction": "lower" | "higher", "unit" }.
-      - "dimensions": by dimension name, { "label", "order" }.
-      - "colorBy", "dashBy": the dimension that colors or dashes the lines by default.
-      - "ignoreEnvironment": environment names whose changes still allow comparing runs.
-      - "smoothing": the default rolling-median window in runs, 0 (off), 5, 11, or 21.
-    -->
-    <script id="benchtrail-config" type="application/json">
-      {
-        "dataUrl": "data.js",
-        "threshold": 0.05
-      }
-    </script>
     <script type="module" src="benchtrail.js"></script>
   </head>
   <body>

@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { lineOption, trailOption, yRange } from "../site/benchtrail/core/chart-option.js";
-import { buildSuite, readSettings, suiteSettings } from "../site/benchtrail/core/history.js";
+import { readConfig, suiteSettings } from "../site/benchtrail/core/config.js";
+import { buildSuite } from "../site/benchtrail/core/history.js";
 import { parseLink } from "../site/benchtrail/core/link.js";
 import { buildView } from "../site/benchtrail/core/view.js";
 
@@ -24,7 +25,7 @@ const THEME = {
 };
 
 // Twenty runs of one benchmark that regresses by 30% at run 12.
-const settings = readSettings({});
+const settings = readConfig({});
 const suite = buildSuite(
   "main",
   Array.from({ length: 20 }, (_, i) => ({

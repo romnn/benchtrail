@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildSuite, readSettings, suiteSettings } from "../site/benchtrail/core/history.js";
+import { readConfig, suiteSettings } from "../site/benchtrail/core/config.js";
+import { buildSuite } from "../site/benchtrail/core/history.js";
 import { urlText } from "../site/benchtrail/core/identity.js";
 
 // A typed entry as a custom github-action-benchmark tool records it.
@@ -19,7 +20,7 @@ function suite(benches, config = {}) {
     tool: "customSmallerIsBetter",
     benches: entries,
   }));
-  const settings = readSettings(config);
+  const settings = readConfig(config);
   return buildSuite("test", runs, suiteSettings(settings, "test"), settings.threshold);
 }
 
@@ -121,6 +122,6 @@ test("an invalid payload is reported and kept apart from valid histories", () =>
 
 test("an invalid name pattern is reported, and names are read as they are", () => {
   const s = suite([[{ name: "parse small", value: 1, unit: "s" }]], { names: "(?<broken" });
-  assert.ok([...s.problems.keys()].some((p) => /name pattern for test is not a valid regular expression/.test(p)));
+  assert.ok([...s.problems.keys()].some((p) => /The setting `names` is not a valid regular expression/.test(p)));
   assert.equal(traces(s)[0].dims.benchmark, "parse small");
 });
