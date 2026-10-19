@@ -8,5 +8,14 @@
   },
   // The page's browser-free modules are checked here too, without DOM types, so the tests can
   // import them and they can never reach for the browser.
-  "include": ["sample/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "site/benchtrail/format.js"]
+  "include": [
+    "sample/**/*.mjs",
+    "scripts/**/*.mjs",
+    "test/**/*.mjs",
+    "site/benchtrail/detect.js",
+    "site/benchtrail/format.js",
+    "site/benchtrail/history.js",
+    "site/benchtrail/identity.js",
+    "site/benchtrail/list.js"
+  ]
 }

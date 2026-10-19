@@ -51,16 +51,6 @@ export function icon(name, extraClass = "") {
   return svg;
 }
 
-// A link target from recorded data, kept only when it is an http or https URL.
-export function safeUrl(url) {
-  try {
-    const parsed = new URL(String(url));
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
-  } catch {
-    return null;
-  }
-}
-
 // A significant change leads with an arrow in its direction, so color is never its only cue.
 export function changeElement(ratio, kind) {
   const { text, arrow, label } = changeParts(ratio, kind);
