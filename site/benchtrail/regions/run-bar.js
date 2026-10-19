@@ -2,9 +2,9 @@
 // commit message below them.
 
 import { formatDateTime } from "../core/format.js";
-import { safeUrl } from "../core/history.js";
 import { unique } from "../core/list.js";
 import { h, icon } from "../dom.js";
+import { subjectElement } from "./run-elements.js";
 
 /** @param {import("./page.js").Page} page */
 export function runBarRegion(page) {
@@ -13,14 +13,14 @@ export function runBarRegion(page) {
   // Both keep one shape for every run, so moving along the trail changes text without moving the
   // layout.
   function renderSelected() {
-    const shown = page.hovered !== null && page.view.runs[page.hovered] ? page.hovered : page.view.selected;
-    const run = page.view.runs[shown];
+    const run = page.shownRun();
+    const selected = run === page.view.runs[page.view.selected];
     const bar = document.getElementById("run-bar");
     if (!run) {
       bar.replaceChildren();
       return;
     }
-    bar.classList.toggle("is-preview", shown !== page.view.selected);
+    bar.classList.toggle("is-preview", !selected);
     const boundary = page.view.boundaries.get(run.index);
     const { worse, better } = page.view.counts(run);
     const tally = [
@@ -70,7 +70,7 @@ export function runBarRegion(page) {
           icon("right"),
         ),
         run.url ? h("a", { class: "sha", href: run.url }, run.short) : h("span", { class: "sha" }, run.short),
-        h("span", { class: "run-subject", title: run.subject }, subjectElement(run)),
+        h("span", { class: "run-subject", title: run.subject }, subjectElement(run, page.data.repoUrl)),
         h("span", { class: "tally" }, ...tally),
       ),
       h(
@@ -78,7 +78,7 @@ export function runBarRegion(page) {
         { class: "run-facts" },
         `${run.author}, ${formatDateTime(run.date)}`,
         boundary ? h("span", { class: "boundary", title: "Changes are not compared across this run" }, boundary.join(", ")) : null,
-        page.link.run.kind === "at" && shown === page.view.selected
+        page.link.run.kind === "at" && selected
           ? h(
               "button",
               {
@@ -92,7 +92,6 @@ export function runBarRegion(page) {
           : null,
       ),
     );
-    page.regions.charts.updateReadouts(run);
   }
 
   // The selected run's full commit message and environment, at the foot of the charts.
@@ -119,40 +118,10 @@ export function runBarRegion(page) {
     );
   }
 
-  // The subject as text, with a trailing pull-request reference such as `(#57)` linked to the PR,
-  // and the given character ranges marked as search matches.
-  function subjectElement(run, marks = []) {
-    const match = /^(.*?)\s*\(#(\d+)\)$/.exec(run.subject);
-    const repo = safeUrl(page.data.repoUrl);
-    if (!match || !repo || new URL(repo).hostname !== "github.com") return marked(run.subject, marks);
-    const anchor = h("a", { href: `${repo.replace(/\/$/, "")}/pull/${match[2]}`, onclick: (event) => event.stopPropagation() }, `#${match[2]}`);
-    return h("span", {}, marked(match[1], marks), " (", anchor, ")");
-  }
-
-  // Text with the given [start, end) ranges wrapped in <mark>; ranges past the text are ignored.
-  function marked(text, marks) {
-    const ranges = marks
-      .map(([a, b]) => [Math.max(0, a), Math.min(text.length, b)])
-      .filter(([a, b]) => a < b)
-      .sort((x, y) => x[0] - y[0]);
-    if (!ranges.length) return document.createTextNode(text);
-    const span = h("span");
-    let at = 0;
-    for (const [a, b] of ranges) {
-      if (b <= at) continue;
-      const from = Math.max(a, at);
-      if (from > at) span.append(text.slice(at, from));
-      span.append(h("mark", {}, text.slice(from, b)));
-      at = b;
-    }
-    if (at < text.length) span.append(text.slice(at));
-    return span;
-  }
-
   function render() {
     renderSelected();
     renderMessage();
   }
 
-  return { roots: ["charts-area", "selected"], render, renderSelected, subjectElement };
+  return { roots: ["run-bar", "selected"], render, renderSelected, renderMessage };
 }

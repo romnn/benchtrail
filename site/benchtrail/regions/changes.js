@@ -2,30 +2,12 @@
 
 import { formatDate } from "../core/format.js";
 import { changeElement, h, icon } from "../dom.js";
+import { movesElement } from "./run-elements.js";
 
 const CHANGES_SHOWN = 5;
 
 /** @param {import("./page.js").Page} page */
 export function changesRegion(page) {
-  // A wrapping list of moves, each a signed change beside the line it belongs to.
-  function movesElement(moves, limit) {
-    const multipleMetrics = page.view.metrics.length > 1;
-    const shown = moves.slice(0, limit);
-    return h(
-      "span",
-      { class: "moves" },
-      ...shown.map(({ line, change, kind }) =>
-        h(
-          "span",
-          { class: "move" },
-          changeElement(change, kind),
-          h("span", { class: "what" }, line.label, multipleMetrics ? h("span", { class: "metric" }, line.metric.label) : null),
-        ),
-      ),
-      moves.length > shown.length ? h("span", { class: "move what" }, `${moves.length - shown.length} more`) : null,
-    );
-  }
-
   // Changes: the runs in view that regressed or improved, newest first.
   // Closed, it is one summary line; opened, it lists the latest few, and then every one.
   function renderChanges() {
@@ -89,7 +71,7 @@ export function changesRegion(page) {
         },
         h("span", { class: "lead" }, changeElement(moves[0].change, moves[0].kind)),
         h("span", { class: "subject", title: run.subject }, run.subject),
-        movesElement(moves, 1),
+        movesElement(moves, 1, page.view.metrics.length > 1),
         h(
           "span",
           { class: "when" },
@@ -111,5 +93,5 @@ export function changesRegion(page) {
     container.replaceChildren(...[summary, h("ul", { class: "change-list" }, ...items), more].filter(Boolean));
   }
 
-  return { roots: ["trail-band"], render: renderChanges, movesElement };
+  return { roots: ["changes"], render: renderChanges };
 }

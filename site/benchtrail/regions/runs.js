@@ -6,6 +6,7 @@ import { runsRoute } from "../core/link.js";
 import { searchRun, searchTokens } from "../core/search.js";
 import { badness } from "../core/view.js";
 import { changeElement, h, icon, lineKey } from "../dom.js";
+import { movesElement, subjectElement } from "./run-elements.js";
 
 // Runs shown at first, and added by each "show more".
 const PAGE_SIZE = 30;
@@ -122,7 +123,7 @@ export function runsRegion(page) {
     const body = h("tbody", {});
     for (const { run, j, match } of runs.slice(0, shown)) {
       const cells = wide
-        ? [h("td", { class: "moves-cell" }, page.regions.changes.movesElement(page.view.moves(run), 4))]
+        ? [h("td", { class: "moves-cell" }, movesElement(page.view.moves(run), 4, page.view.metrics.length > 1))]
         : page.view.lines.map((line) => {
             const value = line.value(run.index);
             const change = line.change(run.index);
@@ -137,7 +138,7 @@ export function runsRegion(page) {
             {},
             h("span", { class: "sha" }, run.short),
             " ",
-            page.regions.runBar.subjectElement(run, match?.marks),
+            subjectElement(run, page.data.repoUrl, match?.marks),
             h("span", { class: "row-meta" }, `${run.author}, ${formatDateTime(run.date)}`, showInCharts(run, j, first, last)),
           ),
           ...cells,

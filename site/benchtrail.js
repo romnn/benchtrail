@@ -74,9 +74,8 @@ const page = {
   render,
   selectRun,
   preview,
-  get hovered() {
-    return hovered;
-  },
+  shownRun,
+  showRun,
   plot,
   zoomWindow,
   smoothing,
@@ -85,9 +84,9 @@ const page = {
   },
   safely,
   reportFailure,
-  regions: null,
 };
 
+/** @satisfies {Record<string, import("./benchtrail/regions/page.js").Region>} */
 const regions = {
   header: headerRegion(page),
   pageHead: pageHeadRegion(page),
@@ -98,9 +97,9 @@ const regions = {
   runs: runsRegion(page),
   notes: notesRegion(page),
 };
-page.regions = regions;
 
 // Each page lists the regions it shows, drawn in this order; the others are hidden.
+/** @satisfies {Record<import("./benchtrail/core/link.js").Route["kind"], readonly import("./benchtrail/regions/page.js").Region[]>} */
 const PAGES = {
   overview: [regions.header, regions.changes, regions.trail, regions.charts, regions.runBar, regions.runs, regions.notes],
   runs: [regions.header, regions.pageHead, regions.runs],
@@ -430,6 +429,9 @@ function arrange(shown) {
     for (const id of region.roots) document.getElementById(id).hidden = !visible.has(id);
     if (!shown.includes(region)) region.leave?.();
   }
+  for (const group of document.querySelectorAll("[data-group]")) {
+    /** @type {HTMLElement} */ (group).hidden = [...group.children].every((child) => /** @type {HTMLElement} */ (child).hidden);
+  }
   document.getElementById("main").dataset.page = link.route.kind;
 }
 
@@ -517,10 +519,22 @@ function preview(index) {
 }
 
 function showDetails(index) {
-  if (index === hovered || !onPage(regions.runBar)) return;
+  if (index === hovered) return;
   hovered = index;
   cancelAnimationFrame(hoverFrame);
-  hoverFrame = requestAnimationFrame(regions.runBar.renderSelected);
+  hoverFrame = requestAnimationFrame(showRun);
+}
+
+// The run the run bar and the readouts show: the one under the pointer, or else the selected one.
+function shownRun() {
+  return view.runs[hovered !== null && view.runs[hovered] ? hovered : view.selected];
+}
+
+// Shows the hovered or selected run in place, in the run bar and under every chart.
+function showRun() {
+  if (onPage(regions.runBar)) regions.runBar.renderSelected();
+  const run = shownRun();
+  if (run && onPage(regions.charts)) regions.charts.updateReadouts(run);
 }
 
 // Choosing a run pins it, even the newest, so a link keeps showing it as runs are added; without
@@ -536,7 +550,8 @@ function selectRun(index, pin = true) {
     const shared = plot();
     if (onPage(regions.trail)) regions.trail.markSelection(shared);
     if (onPage(regions.charts)) regions.charts.markSelection(shared);
-    if (onPage(regions.runBar)) regions.runBar.render();
+    if (onPage(regions.runBar)) regions.runBar.renderMessage();
+    showRun();
     regions.runs.markHistorySelection();
   });
 }

@@ -152,6 +152,8 @@ export function chartsRegion(page) {
       chart.instance.setOption(option, { notMerge: true });
       chart.instance.resize();
     }
+    const run = page.shownRun();
+    if (run) updateReadouts(run);
   }
 
   // On the overview a chart's title links to its page.
@@ -217,7 +219,7 @@ export function chartsRegion(page) {
                 if (open) openReadouts.delete(chart.key);
                 else openReadouts.add(chart.key);
                 buildReadout(chart);
-                page.regions.runBar.renderSelected();
+                page.showRun();
               },
             },
             open ? "Show fewer" : `Show ${rest} more`,
@@ -429,5 +431,5 @@ export function chartsRegion(page) {
     if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
   }
 
-  return { roots: ["charts-area"], render: renderCharts, updateReadouts, refreshMovers, markSelection, reset, leave, snapshot, restore };
+  return { roots: ["layout", "charts"], render: renderCharts, updateReadouts, refreshMovers, markSelection, reset, leave, snapshot, restore };
 }

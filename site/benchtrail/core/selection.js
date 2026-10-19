@@ -31,6 +31,11 @@
  */
 
 /**
+ * An action that opens another page, which is all a navigation may do.
+ * @typedef {Extract<Action, { type: "open" }>} Navigation
+ */
+
+/**
  * @param {LinkState} link
  * @param {Action} action
  * @returns {LinkState}
