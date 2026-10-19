@@ -405,10 +405,11 @@ export function chartsRegion(page) {
   }
 
   // A new suite, section, or page starts its movers table at the first page, with every readout
-  // folded.
+  // folded, and draws new charts, so an interaction with the old ones cannot reach the new view.
   function reset() {
     moversShown = MOVERS_PAGE;
     openReadouts.clear();
+    leave();
   }
 
   // A history entry keeps how many rows its movers table showed.

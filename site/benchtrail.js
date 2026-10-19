@@ -336,11 +336,9 @@ function snapshot() {
   return Object.fromEntries(Object.entries(regions).flatMap(([name, region]) => (region.snapshot ? [[name, region.snapshot()]] : [])));
 }
 
-// Starts the state that belongs to one suite, section, or page afresh: each region's own, and any
-// drag in progress, which kept chart instances would otherwise end in the new view.
+// Starts the state that belongs to one suite, section, or page afresh, each region's own.
 function startAfresh() {
   for (const region of Object.values(regions)) region.reset?.();
-  runtime.cancelDrags();
 }
 
 // Writes the link to the address bar, replacing the current entry, since changing what the page

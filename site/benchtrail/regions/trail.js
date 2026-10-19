@@ -19,5 +19,12 @@ export function trailRegion(page) {
     trail?.setOption({ series: [{ id: "trail", markLine: markers(shared, { labels: true }) }] });
   }
 
-  return { roots: ["trail-chart"], render: renderTrail, markSelection };
+  // A new suite, section, or page draws a new trail, so a drag of the old one's slider cannot
+  // move the new view.
+  function reset() {
+    page.runtime.dropTrail();
+    trail = null;
+  }
+
+  return { roots: ["trail-chart"], render: renderTrail, markSelection, reset };
 }

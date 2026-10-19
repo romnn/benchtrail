@@ -43,9 +43,6 @@ export function createRuntime(echarts, host) {
   const charts = new Set();
   /** @type {Map<Instance, () => void>} */
   const teardowns = new Map();
-  // The cancellation of every drag in progress, which belongs to the view it started in.
-  /** @type {Set<() => void>} */
-  const drags = new Set();
 
   // Runs a handler so that an error inside it is reported instead of escaping into the chart
   // library, where it could interrupt the library's own event dispatch.
@@ -368,7 +365,6 @@ export function createRuntime(echarts, host) {
     // Every way a drag can end removes those listeners: release, cancellation, losing focus, and
     // the chart being removed.
     const cancel = () => {
-      drags.delete(cancel);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
@@ -409,7 +405,6 @@ export function createRuntime(echarts, host) {
       cancel();
       from = x(event);
       pointer = event.pointerId;
-      drags.add(cancel);
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
       window.addEventListener("pointercancel", cancel);
@@ -462,11 +457,15 @@ export function createRuntime(echarts, host) {
       onScreen.delete(chart.dom);
       dispose(chart.instance);
     },
-    syncZoom,
-    // Ends every drag in progress without zooming, since its release would land in another view.
-    cancelDrags() {
-      for (const cancel of [...drags]) cancel();
+    /**
+     * Ends the trail with everything it started, including a drag of its slider, which the chart
+     * library follows on the document; the next `trail` call creates it afresh.
+     */
+    dropTrail() {
+      if (trail) dispose(trail);
+      trail = null;
     },
+    syncZoom,
     // New charts are drawn with the current window, so the next sync must reach all of them.
     redrawn() {
       appliedZoom = "";
