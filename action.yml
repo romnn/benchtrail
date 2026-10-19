@@ -1,0 +1,24 @@
+name: benchtrail
+description: Install the benchtrail dashboard beside a github-action-benchmark history.
+author: romnn
+branding:
+  icon: activity
+  color: blue
+
+inputs:
+  path:
+    description: >-
+      The directory that holds the history, as github-action-benchmark's `benchmark-data-dir-path`
+      names it.
+      The dashboard's files are replaced there; the history and any other file stay.
+    default: dev/bench
+  settings:
+    description: >-
+      The page's settings as a JSON object, written to `benchtrail.json` in that directory.
+      Settings that break a rule fail the step before anything is written.
+      Without it, the directory keeps the settings it has.
+    default: ""
+
+runs:
+  using: node24
+  main: action/main.mjs

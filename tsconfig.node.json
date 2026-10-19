@@ -6,6 +6,6 @@
     "lib": ["es2024"],
     "types": ["node"]
   },
-  // Tests import the page's core modules, so they are part of this project too.
-  "include": ["sample/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "site/benchtrail/core/**/*.js"]
+  // Tests and the GitHub Action import the page's core modules, so they are part of this project too.
+  "include": ["action/**/*.mjs", "sample/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "site/benchtrail/core/**/*.js"]
 }

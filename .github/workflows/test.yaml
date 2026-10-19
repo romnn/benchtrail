@@ -24,3 +24,32 @@ jobs:
       - run: mise install task node npm:pnpm
       - name: Test
         run: task test
+
+  # Runs the action as a workflow uses it, on each runner's own Node and without the development
+  # dependencies, into a directory that holds a history.
+  action:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Record a history
+        shell: bash
+        run: |
+          mkdir -p _site/bench
+          echo 'window.BENCHMARK_DATA = { "entries": {} };' > _site/bench/data.js
+      - uses: ./
+        with:
+          path: _site/bench
+          settings: |
+            { "title": "Sample benchmarks", "smoothing": 5 }
+      - name: Check the installed dashboard
+        shell: bash
+        run: |
+          cd _site/bench
+          test -f index.html && test -f benchtrail.js && test -f benchtrail/core/config.js
+          grep -q '"title": "Sample benchmarks"' benchtrail.json
+          grep -q BENCHMARK_DATA data.js

@@ -3,3 +3,9 @@ current_version = "0.1.0"
 commit = true
 tag = true
 message = "chore(release): bump version to {new_version}"
+
+# The README's workflow example pins the action to the release it documents.
+[[tool.bumpversion.files]]
+filename = "README.md"
+search = "romnn/benchtrail@v{current_version}"
+replace = "romnn/benchtrail@v{new_version}"

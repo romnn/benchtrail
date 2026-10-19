@@ -18,7 +18,59 @@ ECharts loads from jsDelivr.
 
 github-action-benchmark writes `data.js` into its `benchmark-data-dir-path` (`dev/bench` by
 default) on the Pages branch, and only creates an `index.html` there when none exists.
-Put benchtrail's files into that directory:
+benchtrail goes into that directory, beside the history.
+
+### With GitHub Actions
+
+The benchtrail action installs the dashboard into the directory and writes its settings there.
+A job that runs after the benchmarks checks out the Pages branch, installs the dashboard, and
+deploys the result to GitHub Pages, set to publish from Actions:
+
+```yaml
+deploy:
+  needs: benchmark
+  runs-on: ubuntu-latest
+  permissions:
+    contents: read
+    pages: write
+    id-token: write
+  environment:
+    name: github-pages
+    url: ${{ steps.deployment.outputs.page_url }}
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: gh-pages
+    - uses: romnn/benchtrail@v0.1.0
+      with:
+        path: dev/bench
+        settings: |
+          { "title": "My project benchmarks" }
+    - uses: actions/upload-pages-artifact@v5
+      with:
+        path: .
+    - id: deployment
+      uses: actions/deploy-pages@v5
+```
+
+The Pages branch keeps only the history, and every deploy installs the dashboard of the pinned
+release.
+A deploy from Actions is also what publishes a push made with `GITHUB_TOKEN`, which does not start
+a branch-based Pages build.
+
+| Input      | Default     | Meaning                                                                                                                               |
+| ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`     | `dev/bench` | The directory that holds the history. The dashboard's files are replaced there; the history and any other file stay.                 |
+| `settings` |             | The [settings](#settings) as a JSON object, written to `benchtrail.json`. Without it, the directory keeps the settings it has. |
+
+Settings that break a rule fail the step before anything is written, and a directory without
+`data.js` is installed with a warning.
+Pin an exact release: before 1.0, a minor release may change the settings.
+Dependabot or Renovate can keep the pin current.
+
+### By hand
+
+Put benchtrail's files into the directory:
 
 ```sh
 git switch gh-pages
@@ -172,8 +224,14 @@ The modules it loads keep the browser at the edge:
 - `benchtrail/regions/` draws each part of a page, such as the header, the charts, or the run list.
 - `benchtrail/chart-runtime.js` owns the ECharts instances and syncs zoom and hover between them.
 
+`action.yml` and `action/` are the GitHub Action.
+It installs `site/` as the tag holds it and checks the settings with the page's own reader, so it
+needs no packages and no build.
+
 ### Releasing
 
-`bumpversion minor` (or `patch`, `major`) commits the version and creates a `v*` tag.
+`bumpversion minor` (or `patch`, `major`) commits the version, with the action version the README
+shows, and creates a `v*` tag.
 Pushing the tag runs the tests and the lint, and publishes a GitHub release with `benchtrail.zip`,
 which packs `site/` as committed at the tag.
+The tag is also the action's version, as `romnn/benchtrail@v<version>`.
