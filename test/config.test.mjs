@@ -81,8 +81,8 @@ test("a suite's own settings override the top-level ones, and its problems stay 
   const other = suiteSettings(config, "Throughput");
   assert.equal(own.label, "{{strategy}}");
   assert.equal(other.label, "{{document}}");
-  // Metric entries merge by key, so a suite's entry replaces the top-level one with the same id.
-  assert.deepEqual(own.metrics.get("cpu"), { direction: "lower" });
+  // A suite's metric entry overrides the top-level one field by field.
+  assert.deepEqual(own.metrics.get("cpu"), { label: "CPU time", direction: "lower" });
   assert.deepEqual(own.metrics.get("rss"), { label: "RSS" });
 
   // A setting of the whole page cannot be set per suite, and a suite's problems are its own.
@@ -98,4 +98,18 @@ test("suite and metric names never reach inherited object properties", () => {
   const settings = suiteSettings(config, "constructor");
   assert.equal(settings.label, null);
   assert.equal(settings.metrics.get("constructor"), undefined);
+});
+
+test("a suite's value that breaks a rule leaves the top-level value in force", () => {
+  const config = readConfig({
+    metrics: { cpu: { direction: "higher" } },
+    dimensions: { doc: { order: 1 } },
+    suites: { main: { metrics: { cpu: { direction: "down" } }, dimensions: { doc: { order: "first" } } }, other: null },
+  });
+  const settings = suiteSettings(config, "main");
+  assert.deepEqual(settings.metrics.get("cpu"), { direction: "higher" });
+  assert.deepEqual(settings.dimensions.get("doc"), { order: 1 });
+  // A suite whose settings are not an object reports to itself alone.
+  assert.deepEqual(suiteSettings(config, "other").problems, ["The setting `suites.other` must be an object."]);
+  assert.equal(settings.problems.length, 2);
 });

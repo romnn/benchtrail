@@ -93,7 +93,7 @@ export function readConfig(raw) {
     else
       for (const [name, own] of Object.entries(raw.suites)) {
         if (isObject(own)) config.suites.set(name, readSettings(own, ["suites", name], reporter(name)));
-        else report(["suites", name], "must be an object");
+        else reporter(name)(["suites", name], "must be an object");
       }
   }
   config.defaults = readSettings(Object.fromEntries(Object.entries(raw).filter(([key]) => !PAGE_KEYS.has(key))), [], report);
@@ -175,8 +175,9 @@ function readSettings(raw, at, report) {
 }
 
 /**
- * The settings one suite reads runs with: its own over the top-level ones, with metric and
- * dimension entries merged by key.
+ * The settings one suite reads runs with: its own over the top-level ones.
+ * A suite's metric or dimension entry overrides the top-level entry of the same name field by
+ * field, so it never drops a field it does not give.
  * @param {Config} config
  * @param {string} name
  * @returns {SuiteSettings}
@@ -187,14 +188,27 @@ export function suiteSettings(config, name) {
   return {
     names: merged.names === undefined ? null : new RegExp(merged.names),
     label: merged.label ?? null,
-    metrics: new Map([...(config.defaults.metrics ?? []), ...(own.metrics ?? [])]),
-    dimensions: new Map([...(config.defaults.dimensions ?? []), ...(own.dimensions ?? [])]),
+    metrics: mergeEntries(config.defaults.metrics, own.metrics),
+    dimensions: mergeEntries(config.defaults.dimensions, own.dimensions),
     colorBy: merged.colorBy ?? null,
     dashBy: merged.dashBy ?? null,
     ignoreEnvironment: new Set(merged.ignoreEnvironment ?? []),
     smoothing: merged.smoothing ?? 0,
     problems: config.problems.filter((problem) => problem.suite === null || problem.suite === name).map((problem) => problem.message),
   };
+}
+
+/**
+ * Named entries with a suite's own over the top-level ones, field by field.
+ * @template {object} T
+ * @param {Map<string, T> | undefined} shared
+ * @param {Map<string, T> | undefined} own
+ * @returns {Map<string, T>}
+ */
+function mergeEntries(shared, own) {
+  const merged = new Map(shared);
+  for (const [name, entry] of own ?? []) merged.set(name, { ...merged.get(name), ...entry });
+  return merged;
 }
 
 /**
