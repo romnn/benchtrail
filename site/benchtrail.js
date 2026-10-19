@@ -7,6 +7,7 @@
 // Typed entries carry these in `extra` as JSON under a `benchtrail` key; untyped entries fall back
 // to a configured name pattern, or to their name as the only dimension.
 
+import { createRuntime } from "./benchtrail/chart-runtime.js";
 import { groupMagnitude, lineOption, markers, trailOption, yRange } from "./benchtrail/core/chart-option.js";
 import { BASELINE_RUNS, relative } from "./benchtrail/core/detect.js";
 import { displayUnit, formatDate, formatDateTime, formatValue } from "./benchtrail/core/format.js";
@@ -62,8 +63,28 @@ let suites = [];
 let suite = null;
 let section = null;
 let view = null;
+/**
+ * A metric chart on the page: its runtime instance, the lines it plots, and what the zoom sync
+ * needs to refit its value axis.
+ * @typedef {object} MetricChartFields
+ * @property {string} key
+ * @property {import("./benchtrail/core/history.js").Metric} metric
+ * @property {string} title
+ * @property {import("./benchtrail/core/view.js").Line[]} benches
+ * @property {HTMLElement} card
+ * @property {HTMLElement} titleNode
+ * @property {HTMLElement} note
+ * @property {HTMLElement} readout
+ * @property {any[]} [readoutItems]
+ * @property {Array<Array<number | null>>} [plotted]
+ * @property {boolean} [log]
+ * @property {{ interval: number | null }} [scale]
+ */
+/** @typedef {import("./benchtrail/chart-runtime.js").Chart & MetricChartFields} MetricChart */
+/** @type {MetricChart[]} */
 let charts = [];
 let trail = null;
+let runtime = null;
 let zoomTimer = 0;
 
 async function boot() {
@@ -77,6 +98,23 @@ async function boot() {
     );
     return;
   }
+  runtime = createRuntime(echarts, {
+    view: () => view,
+    axis: () => link.axis,
+    zoom,
+    window: zoomWindow,
+    percentOfRun: (j) => percentOfRun(j),
+    refit: (/** @type {MetricChart} */ chart) => {
+      const yAxis = yRange(zoomWindow(), chart.plotted, chart.log);
+      // The tick formatter reads the step from this object, so labels follow the refitted axis.
+      if (chart.scale) chart.scale.interval = yAxis.interval;
+      return yAxis;
+    },
+    zoomed: zoomMoved,
+    hovered: preview,
+    selected: (j) => selectRun(j),
+    fail: reportFailure,
+  });
   document.getElementById("summary").textContent = "Loading benchmark history…";
   try {
     data = await loadHistory(config.dataUrl);
@@ -606,9 +644,7 @@ function lineKey(style) {
 
 function renderTrail() {
   const dom = document.getElementById("trail-chart");
-  if (!trail) {
-    trail = createChart(dom);
-  }
+  trail = runtime.trail(dom);
   trail.setOption(trailOption(plot(), dom.clientWidth), { notMerge: true });
 }
 
@@ -619,20 +655,12 @@ function renderTrail() {
 // When dimensions split the charts, each metric gets a heading over its grid of small charts.
 function renderCharts() {
   const container = document.getElementById("charts");
-  // New charts are drawn with the current window, and the next sync must reach all of them.
-  appliedZoom = "";
+  runtime.redrawn();
   const shared = plot();
   const faceted = view.pivot.facet.length > 0;
   renderLayoutSwitch();
   if (currentLayout() === "movers") {
-    for (const chart of charts) {
-      chartObservers.get(chart.instance)?.disconnect();
-      dragControllers.get(chart.instance)?.dispose();
-      screenObserver.unobserve(chart.dom);
-      onScreen.delete(chart.dom);
-      pendingZoom.delete(chart);
-      chart.instance.dispose();
-    }
+    for (const chart of charts) runtime.unmount(chart);
     charts = [];
     container.classList.remove("is-faceted");
     container.classList.add("is-movers");
@@ -664,16 +692,7 @@ function renderCharts() {
   const shownGroups = groups.filter((group) => group.cells.length);
   const wanted = shownGroups.flatMap((group) => group.cells);
 
-  for (const chart of charts) {
-    if (!wanted.some((cell) => cell.key === chart.key)) {
-      chartObservers.get(chart.instance)?.disconnect();
-      dragControllers.get(chart.instance)?.dispose();
-      screenObserver.unobserve(chart.dom);
-      onScreen.delete(chart.dom);
-      pendingZoom.delete(chart);
-      chart.instance.dispose();
-    }
-  }
+  for (const chart of charts) if (!wanted.some((cell) => cell.key === chart.key)) runtime.unmount(chart);
   charts = wanted.map((cell) => {
     const existing = charts.find((chart) => chart.key === cell.key && !chart.instance.isDisposed());
     if (existing) return Object.assign(existing, cell);
@@ -682,9 +701,7 @@ function renderCharts() {
     const title = h("span", { class: "title" });
     const readout = h("div", { class: "readout" });
     const card = h("article", { class: "chart-card" }, h("h3", {}, title, " ", note), dom, readout);
-    const instance = createChart(dom);
-    screenObserver.observe(dom);
-    return { ...cell, card, dom, note, readout, titleNode: title, instance };
+    return runtime.mount({ ...cell, card, dom, note, readout, titleNode: title });
   });
 
   container.classList.toggle("is-faceted", faceted);
@@ -980,327 +997,6 @@ function plot() {
   return { view, axis: link.axis, scale: link.scale, smoothing: smoothing(), zoom: zoom(), window: zoomWindow, theme: theme(), smoothCache };
 }
 
-// Shared chart parts
-
-// Charts are linked by syncZoom and syncPointer, so zoom and the hover crosshair move together.
-// Hovering shows no overlay: it previews the run in the run bar and the readouts instead.
-// The resize observer of each chart, so a disposed chart stops being observed.
-const chartObservers = new WeakMap();
-// The drag controller of each chart, so removing a chart also ends a drag in progress on it.
-const dragControllers = new WeakMap();
-
-function createChart(dom) {
-  const instance = echarts.init(dom, null, { renderer: "svg" });
-  chartObservers.set(instance, observeSize(dom, instance));
-  // The event carries the window, which avoids cloning every chart's option through getOption.
-  instance.on(
-    "datazoom",
-    safely((/** @type {any} */ event) => {
-      if (syncingZoom) return;
-      const moved = event.batch?.[0] ?? event;
-      if (!Number.isFinite(moved.start) || !Number.isFinite(moved.end)) return;
-      ui.gesture = { start: moved.start, end: moved.end, window: link.window, axis: link.axis };
-      syncZoom(instance);
-      clearTimeout(zoomTimer);
-      // Once the gesture pauses, its window is committed to the link as the runs at its ends.
-      zoomTimer = setTimeout(
-        safely(() => {
-          const gesture = ui.gesture;
-          dispatch({ type: "set", changes: { window: windowAt(gesture, link.axis) } }, () => {
-            gesture.window = link.window;
-            renderChanges();
-            renderHistory();
-            // The movers table ranks lines over the window, so it follows the window once it settles.
-            if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
-          });
-        }),
-        250,
-      );
-    }),
-  );
-  instance.on(
-    "updateAxisPointer",
-    safely((/** @type {any} */ event) => {
-      if (syncingPointer) return;
-      const x = event.axesInfo?.find((info) => info.axisDim === "x")?.value;
-      if (x === undefined) return;
-      const j = indexAtX(x);
-      preview(j);
-      syncPointer(instance, j);
-    }),
-  );
-  instance.getZr().on(
-    "globalout",
-    safely(() => {
-      preview(null);
-      syncPointer(instance, null);
-    }),
-  );
-  const drag = wireDragZoom(dom, instance);
-  dragControllers.set(instance, drag);
-  instance.getZr().on(
-    "click",
-    safely((event) => {
-      // The click that ends a drag has already zoomed, so it selects nothing.
-      if (drag.justZoomed()) return;
-      selectAtPixel(instance, event);
-    }),
-  );
-  return instance;
-}
-
-// Moves the crosshair of every other chart to the same run, or hides it, so hovering one chart
-// reads across the page.
-// The charts are linked by hand rather than through an ECharts group, whose own zoom relay would
-// echo the zoom sync below without end.
-// Broadcasts are coalesced to one per frame, and each chart's crosshair is placed by the run's
-// position on its axis rather than by a point of one series, which may have no value there.
-// A request remembers the view it was made in, since a run position means nothing in another.
-// A broadcast is skipped only when both the run and the source chart are unchanged, because the
-// chart the pointer just left hid its own crosshair and needs it back.
-let syncingPointer = false;
-let pointerAt = null;
-let pointerFrom = null;
-let pointerFrame = 0;
-let pointerRequest = null;
-
-function syncPointer(source, j) {
-  pointerRequest = { source, view, j: Number.isInteger(j) && view.runs[j] ? j : null };
-  if (pointerFrame) return;
-  pointerFrame = requestAnimationFrame(() => {
-    pointerFrame = 0;
-    const request = pointerRequest;
-    pointerRequest = null;
-    if (!request || request.view !== view) return;
-    const { source: from, j: at } = request;
-    if (at !== null && !view.runs[at]) return;
-    if (at === pointerAt && from === pointerFrom) return;
-    pointerAt = at;
-    pointerFrom = from;
-    // Charts scrolled out of view are skipped, and catch up when they come back into view.
-    for (const instance of allCharts()) {
-      if (instance !== from && (instance === trail || onScreen.has(instance.getDom()))) placePointer(instance, at);
-    }
-  });
-}
-
-// Moves one chart's crosshair to a run, or hides it.
-function placePointer(instance, at) {
-  syncingPointer = true;
-  try {
-    guarded(() => {
-      if (at === null || !view.runs[at]) {
-        instance.dispatchAction({ type: "updateAxisPointer", currTrigger: "leave" });
-        instance.dispatchAction({ type: "hideTip" });
-        return;
-      }
-      const run = view.runs[at];
-      const x = instance.convertToPixel({ xAxisIndex: 0 }, link.axis === "date" ? run.date : `r${run.index}`);
-      if (Number.isFinite(x)) instance.dispatchAction({ type: "showTip", x, y: instance.getHeight() / 2 });
-    });
-  } finally {
-    syncingPointer = false;
-  }
-}
-
-function allCharts() {
-  return [trail, ...charts.map((chart) => chart.instance)].filter((instance) => instance && !instance.isDisposed());
-}
-
-// Applies the zoom window to every other chart, so the trail's slider, a drag in any chart, and a
-// zoom gesture all move the whole page together.
-// Updates are coalesced to one per frame with the latest window, and each chart gets a single
-// silent setOption carrying both its window and its refitted value axis: silent updates emit no
-// datazoom events, so the sync cannot echo, and a continuous gesture costs one pass per frame.
-let syncingZoom = false;
-let zoomFrame = 0;
-let zoomSource = null;
-let appliedZoom = "";
-
-function syncZoom(source) {
-  zoomSource = source;
-  if (zoomFrame) return;
-  zoomFrame = requestAnimationFrame(() => {
-    zoomFrame = 0;
-    const current = zoom();
-    const key = `${current.start}|${current.end}|${charts.length}`;
-    if (key === appliedZoom) return;
-    appliedZoom = key;
-    // A gesture on a chart moves its own window, but its value axis still needs refitting.
-    pendingZoom.clear();
-    const window = { start: current.start, end: current.end };
-    syncingZoom = true;
-    try {
-      if (trail && !trail.isDisposed() && trail !== zoomSource) guarded(() => trail.setOption({ dataZoom: [window, window] }, { silent: true }));
-      // Charts on screen follow every frame; those scrolled out of view catch up once the gesture
-      // pauses, since nobody sees them move.
-      for (const chart of charts) {
-        if (onScreen.has(chart.dom)) applyZoom(chart, window);
-        else pendingZoom.add(chart);
-      }
-    } finally {
-      syncingZoom = false;
-    }
-    clearTimeout(offscreenTimer);
-    offscreenTimer = setTimeout(
-      safely(() => {
-        for (const chart of pendingZoom) applyZoom(chart, zoom());
-        pendingZoom.clear();
-      }),
-      200,
-    );
-  });
-}
-
-const pendingZoom = new Set();
-let offscreenTimer = 0;
-
-function applyZoom(chart, window) {
-  const instance = chart.instance;
-  if (instance.isDisposed()) return;
-  const yAxis = yRange(zoomWindow(), chart.plotted, chart.log);
-  if (chart.scale) chart.scale.interval = yAxis.interval;
-  const option = { yAxis };
-  if (instance !== zoomSource) option.dataZoom = [window];
-  guarded(() => instance.setOption(option, { silent: true }));
-}
-
-// The chart boxes currently on screen, kept by one observer for all charts.
-const onScreen = new Set();
-const screenObserver = new IntersectionObserver(
-  safely((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) {
-        onScreen.delete(entry.target);
-        continue;
-      }
-      onScreen.add(entry.target);
-      // A chart coming into view takes up the crosshair it missed while away.
-      const instance = charts.find((chart) => chart.dom === entry.target)?.instance;
-      if (instance && !instance.isDisposed() && instance !== pointerFrom) placePointer(instance, pointerAt);
-    }
-  }),
-);
-
-// Runs an update on one chart so that a failure there is reported without stopping the others.
-function guarded(update) {
-  try {
-    update();
-  } catch (error) {
-    reportFailure(error);
-  }
-}
-
-// Dragging across a plot zooms every chart to the runs it covers; a faint band follows the
-// pointer meanwhile, and a double click shows all runs again.
-// The plot allows vertical page scrolling on touch screens, so only a sideways drag zooms.
-function wireDragZoom(dom, instance) {
-  const DRAG_MIN = 5;
-  let from = null;
-  let pointer = null;
-  let band = null;
-  let zoomedAt = 0;
-  const x = (event) => event.clientX - dom.getBoundingClientRect().left;
-  const y = (event) => event.clientY - dom.getBoundingClientRect().top;
-
-  // Moves and the release are followed on the window, so a drag that leaves the chart still ends
-  // where the pointer is let go, while a plain click still reaches the chart and selects a run.
-  // Every way a drag can end removes those listeners: release, cancellation, losing focus, and the
-  // chart being removed.
-  const cancel = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    window.removeEventListener("pointercancel", cancel);
-    window.removeEventListener("blur", cancel);
-    from = null;
-    pointer = null;
-    band?.remove();
-    band = null;
-  };
-  const move = safely((event) => {
-    if (from === null || event.pointerId !== pointer || Math.abs(x(event) - from) < DRAG_MIN) return;
-    if (!band) band = dom.appendChild(h("div", { class: "drag-band", "aria-hidden": "true" }));
-    const width = dom.clientWidth;
-    const left = Math.max(0, Math.min(from, x(event)));
-    band.style.left = `${left}px`;
-    band.style.width = `${Math.min(width, Math.max(from, x(event))) - left}px`;
-  });
-  const up = safely((event) => {
-    if (event.pointerId !== pointer) return;
-    const start = from;
-    const end = Math.max(0, Math.min(dom.clientWidth, x(event)));
-    cancel();
-    if (start === null || Math.abs(end - start) < DRAG_MIN || instance.isDisposed()) return;
-    const top = instance.getHeight() / 2;
-    const runAt = (px) => {
-      const value = instance.convertFromPixel({ gridIndex: 0 }, [px, top])?.[0];
-      return value === undefined || Number.isNaN(Number(value)) ? null : indexAtX(value);
-    };
-    const clamp = (j) => Math.min(view.runs.length - 1, Math.max(0, j));
-    const a = runAt(Math.min(start, end));
-    const b = runAt(Math.max(start, end));
-    if (a === null || b === null || clamp(b) <= clamp(a)) return;
-    zoomedAt = performance.now();
-    instance.dispatchAction({ type: "dataZoom", start: percentOfRun(clamp(a)), end: percentOfRun(clamp(b)) });
-  });
-  dom.addEventListener(
-    "pointerdown",
-    safely((event) => {
-      if (event.button !== 0 || !instance.containPixel({ gridIndex: 0 }, [x(event), y(event)])) return;
-      cancel();
-      from = x(event);
-      pointer = event.pointerId;
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", cancel);
-      window.addEventListener("blur", cancel);
-    }),
-  );
-  dom.addEventListener(
-    "dblclick",
-    safely(() => {
-      if (!instance.isDisposed()) instance.dispatchAction({ type: "dataZoom", start: 0, end: 100 });
-    }),
-  );
-  return { justZoomed: () => performance.now() - zoomedAt < 300, dispose: cancel };
-}
-
-// Resizes a chart when its box changes size, and only then, so a layout change caused by the
-// resize itself cannot feed back into another one.
-function observeSize(dom, instance) {
-  let size = "";
-  const observer = new ResizeObserver(
-    safely(() => {
-      const next = `${dom.clientWidth}x${dom.clientHeight}`;
-      if (next === size || instance.isDisposed()) return;
-      size = next;
-      instance.resize();
-    }),
-  );
-  observer.observe(dom);
-  return observer;
-}
-
-// Selection and hover
-
-// Maps an x-axis value to a run position: a category index, or the nearest run in date mode.
-function indexAtX(x) {
-  if (link.axis !== "date") return Math.round(Number(x));
-  let index = 0;
-  for (let j = 1; j < view.runs.length; j += 1) {
-    if (Math.abs(view.runs[j].date - x) < Math.abs(view.runs[index].date - x)) index = j;
-  }
-  return index;
-}
-
-function selectAtPixel(instance, event) {
-  const point = [event.offsetX, event.offsetY];
-  if (!instance.containPixel({ gridIndex: 0 }, point)) return;
-  const x = instance.convertFromPixel({ gridIndex: 0 }, point)?.[0];
-  if (x === undefined || Number.isNaN(x)) return;
-  selectRun(indexAtX(x));
-}
-
 // Hover previews a run in the details panel; leaving the charts returns to the selected run.
 // The return waits a moment, so moving between charts does not flicker back and forth.
 let hovered = null;
@@ -1310,12 +1006,8 @@ let hoverFrame = 0;
 function resetHover() {
   clearTimeout(hoverTimer);
   cancelAnimationFrame(hoverFrame);
-  cancelAnimationFrame(pointerFrame);
-  pointerFrame = 0;
-  pointerRequest = null;
+  runtime.cancelPointer();
   hovered = null;
-  pointerAt = null;
-  pointerFrom = null;
 }
 
 function preview(index) {
@@ -1955,6 +1647,26 @@ function runAtPercent(percent, axis = link.axis) {
   if (axis !== "date") return runs[Math.round((percent / 100) * (runs.length - 1))];
   const target = runs[0].date + (percent / 100) * (runs.at(-1).date - runs[0].date);
   return runs.reduce((best, run) => (Math.abs(run.date - target) < Math.abs(best.date - target) ? run : best));
+}
+
+// A gesture moved the zoom window: it is shown at once, and committed to the link as the runs at
+// its ends once the gesture pauses.
+function zoomMoved(start, end) {
+  ui.gesture = { start, end, window: link.window, axis: link.axis };
+  clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(
+    safely(() => {
+      const gesture = ui.gesture;
+      dispatch({ type: "set", changes: { window: windowAt(gesture, link.axis) } }, () => {
+        gesture.window = link.window;
+        renderChanges();
+        renderHistory();
+        // The movers table ranks lines over the window, so it follows the window once it settles.
+        if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
+      });
+    }),
+    250,
+  );
 }
 
 // The zoom window in percent of the x axis: as a gesture left it, until the link's window or axis
