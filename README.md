@@ -88,6 +88,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: main
+      # Hugo, and Go for its modules, as the repository's mise.toml pins them.
+      - uses: jdx/mise-action@v4
       - id: pages
         uses: actions/configure-pages@v6
       - name: Build the documentation
