@@ -1,0 +1,22 @@
+[tools]
+# Developer tools
+task = "latest"
+typos = "latest"
+actionlint = "latest"
+"github:romnn/cooldown" = { version = "latest", minimum_release_age = "0" }
+"github:romnn/bumpversion" = { version = "latest", matching = "bumpversion", minimum_release_age = "0" }
+gh = "latest"
+
+# JavaScript tooling
+# The site itself needs none of these: Node runs the sample generators, the tests and the type check.
+node = "24"
+"npm:pnpm" = "latest"
+biome = "latest"
+
+[settings]
+lockfile = true
+lockfile_platforms = [
+  "linux-x64",
+  "macos-arm64",
+  "windows-x64",
+]

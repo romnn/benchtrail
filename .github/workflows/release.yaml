@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/refs/heads/master/src/schemas/json/github-workflow.json
+name: release
+on:
+  push:
+    tags:
+      - "*"
+
+env:
+  MISE_GITHUB_TOKEN: ${{ github.token }}
+  MISE_AUTO_INSTALL: "0"
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yaml
+
+  lint:
+    uses: ./.github/workflows/lint.yaml
+
+  release:
+    runs-on: ubuntu-24.04
+    needs: [tests, lint]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: true
+          env: false
+      - run: mise install task gh
+      - name: Release
+        run: task release
+        env:
+          GH_TOKEN: ${{ github.token }}

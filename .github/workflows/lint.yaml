@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/refs/heads/master/src/schemas/json/github-workflow.json
+name: lint
+on:
+  push: {}
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_call: {}
+
+env:
+  MISE_GITHUB_TOKEN: ${{ github.token }}
+  MISE_AUTO_INSTALL: "0"
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: true
+          env: false
+      - run: mise install task biome node npm:pnpm
+      - name: Lint and check formatting
+        run: task lint
+      - name: Type-check
+        run: task check
+
+  spellcheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: true
+          env: false
+      - run: mise install task typos
+      - name: Spellcheck
+        run: task spellcheck

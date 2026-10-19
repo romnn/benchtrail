@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "node_modules/.cache/tsc/site.tsbuildinfo",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": []
+  },
+  "include": ["site/**/*.js", "types/**/*.d.ts"]
+}

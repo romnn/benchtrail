@@ -1,0 +1,154 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.png" />
+  <img alt="benchtrail showing a sample benchmark history" src="docs/hero.png" />
+</picture>
+
+# benchtrail
+
+benchtrail is a static dashboard for the benchmark history that
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) commits to a
+project's GitHub Pages branch.
+It reads the action's `data.js` as is, splits each benchmark into named dimensions and metrics, and
+marks the runs where a value regressed or improved.
+
+The page needs no build step and no server code: three files and the history sit side by side.
+ECharts loads from jsDelivr.
+
+## Use it
+
+github-action-benchmark writes `data.js` into its `benchmark-data-dir-path` (`dev/bench` by
+default) on the Pages branch, and only creates an `index.html` there when none exists.
+Put benchtrail's files into that directory:
+
+```sh
+git switch gh-pages
+curl -fsSL -o /tmp/benchtrail.zip https://github.com/romnn/benchtrail/releases/latest/download/benchtrail.zip
+unzip -o /tmp/benchtrail.zip -d dev/bench
+git add dev/bench && git commit -m "Add the benchtrail dashboard" && git push
+```
+
+The archive holds `index.html`, `benchtrail.js` and `benchtrail.css`.
+To upgrade later, replace all three files, since a release may change the page's markup and its
+pinned ECharts build, then copy your settings block from the old `index.html` into the new one.
+
+### Settings
+
+`index.html` carries a JSON block that configures the page; every key is optional:
+
+```html
+<script id="benchtrail-config" type="application/json">
+  {
+    "title": "My project benchmarks",
+    "threshold": 0.05,
+    "names": "^(?<document>[^.]+)\\.(?<strategy>\\S+) (?<metric>.+)$",
+    "label": "{{document}} / {{strategy}}",
+    "metrics": { "cpu": { "label": "CPU time", "direction": "lower" } },
+    "suites": { "Throughput": { "colorBy": "parser" } }
+  }
+</script>
+```
+
+- `title` replaces the heading, which defaults to the repository name from the history.
+- `dataUrl` points at the history script, `data.js` by default.
+  A `?data=` query parameter overrides it with a same-origin path to a `.js` file, made of letters,
+  digits, `_`, `.`, `/` and `-`.
+- `threshold` is the smallest relative change that can count as a regression or an improvement,
+  `0.05` by default.
+  A shift must also stand out from the benchmark's own noise; see [Detecting changes](#detecting-changes).
+
+The remaining keys apply to every suite at the top level, or to one suite under `"suites"`:
+
+- `names` is a regular expression whose named groups read dimensions out of an untyped benchmark
+  name; a group called `metric` names the metric.
+- `label` is a template for a benchmark's label.
+- `metrics` maps a metric id to `{ "label", "direction": "lower" | "higher", "unit" }`.
+- `dimensions` maps a dimension name to `{ "label", "order" }`.
+- `colorBy` and `dashBy` name the dimension that colors or dashes the lines by default.
+- `ignoreEnvironment` lists environment names whose changes still allow comparing runs.
+- `smoothing` is the default smoothing window in runs: `0` (off, the default), `5`, `11` or `21`.
+  Charts then draw the rolling median as a line over the raw values.
+
+The comment above the block in `index.html` is the reference for these keys.
+
+## Typed benchmarks
+
+Without configuration, a benchmark's name is its only dimension.
+A producer can describe each entry precisely instead, through the `extra` string that
+github-action-benchmark's custom tools store with every value.
+benchtrail reads `extra` as JSON with a `benchtrail` key, version 1:
+
+```json
+{
+  "name": "petstore/generated cpu",
+  "unit": "s",
+  "value": 0.518,
+  "extra": "{\"benchtrail\":{\"version\":1,\"dimensions\":{\"document\":\"petstore\",\"strategy\":\"generated\"},\"metric\":{\"id\":\"cpu\",\"label\":\"CPU time\",\"direction\":\"lower\"},\"environment\":{\"rustc\":\"1.97.0\"}},\"text\":\"rustc 1.97.0\"}"
+}
+```
+
+Inside `benchtrail`:
+
+| Key                | Required | Meaning                                                                                                                                                                                                                      |
+| ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`          | yes      | Always `1`. Other versions are reported, not guessed at.                                                                                                                                                                     |
+| `metric.id`        | yes      | A non-empty string naming what was measured. The entry's `unit` stays the unit.                                                                                                                                              |
+| `metric.label`     | no       | The metric's display name.                                                                                                                                                                                                   |
+| `metric.direction` | no       | `"lower"`, `"higher"` or `"unknown"`. Without it, the `metrics` setting or the github-action-benchmark tool decides.                                                                                                         |
+| `dimensions`       | no       | Names mapped to strings, finite numbers or booleans. With the metric, they identify the benchmark; `4` and `"4"` differ.                                                                                                     |
+| `environment`      | no       | Names mapped to the same scalar types, such as a compiler version. A change starts a new segment, so no verdict compares across it. |
+| `benchmarkId`      | no       | A non-empty string that keeps one benchmark's history together while its dimensions change.                                          |
+
+A run records each benchmark once per metric: one value per set of dimensions, or per
+`benchmarkId` when one is given.
+Variants measured side by side in one run, such as the same benchmark on two operating systems,
+belong in `dimensions`, not in `environment`; entries that differ only in their environment are
+reported as duplicates and only the first is kept.
+
+An optional `text` string next to `benchtrail` appears as a note on the selected run.
+Unknown keys are ignored, so later additions stay readable.
+A payload that fails these rules is shown on its own under its name and listed among the page's
+problems, so it never merges into a valid history.
+
+## Detecting changes
+
+benchtrail compares each value with the median of up to 20 earlier values of the same benchmark,
+counted from the start of its segment or from the last detected change, and needs at least 8 of
+them.
+A run is marked as a regression or an improvement when the median of it and the next two values
+moves beyond both `threshold` and four times the noise expected for that comparison, estimated from
+the earlier values' median absolute deviation.
+The run itself must also move that far in the same direction, so a step is marked once, at the run
+that started it, and a lone outlier that returns to normal is never marked.
+Each of those runs must also lie beyond all but one of the earlier values, so noise that alternates
+between a few levels does not read as a change.
+A change at one of the last two runs is shown as unconfirmed until later runs confirm it.
+
+## Development
+
+[mise](https://mise.jdx.dev) installs the tools pinned in `mise.toml` and `mise.lock`; run
+`mise install` once.
+The site itself has no dependencies: Node, pnpm and the packages in `package.json` exist only for the
+checks and scripts below.
+
+| Command                  | What it does                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `task serve`             | Serves the repository at http://127.0.0.1:8765; open `/site/?data=../sample/data.js`.           |
+| `task samples`           | Regenerates `sample/data.js` and `sample/edge-cases.js`. `task samples -- 500` writes 500 runs. |
+| `task lint`              | Lints and checks formatting with Biome. `task fix` applies the safe fixes and formats.          |
+| `task format`            | Formats with Biome.                                                                             |
+| `task check`             | Type-checks the JavaScript with TypeScript, using JSDoc where present.                          |
+| `task test`              | Runs the Node tests: sample generators, preview server, ECharts version and integrity pin.      |
+| `task spellcheck`        | Runs typos.                                                                                     |
+| `task lint:actions`      | Runs actionlint on the workflows.                                                               |
+| `task screenshot`        | Captures `docs/hero.png` and `docs/hero-dark.png`. Run `task screenshot:setup` once first.      |
+| `task screenshot:docker` | The same capture inside the Playwright container, for fonts that do not depend on the machine.  |
+| `task outdated`          | Lists dependency updates, respecting the 14-day cooldown in `cooldown.toml`.                    |
+
+`sample/edge-cases.js` collects the irregular data real histories contain; open it with
+`?data=../sample/edge-cases.js`.
+
+### Releasing
+
+`bumpversion minor` (or `patch`, `major`) commits the version and creates a `v*` tag.
+Pushing the tag runs the tests and the lint, and publishes a GitHub release with `benchtrail.zip` and the three
+site files, taken from the tag.
