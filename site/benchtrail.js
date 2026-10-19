@@ -72,6 +72,7 @@ const page = {
   go,
   href,
   anchor,
+  saveEntry: () => persistEntry(),
   render,
   selectRun,
   preview,
@@ -154,8 +155,11 @@ async function boot() {
   for (const s of suites) for (const problem of s.problems.keys()) console.warn(`benchtrail: ${s.name}: ${problem}`);
 
   link = settle(suites, link);
-  entryId = history.state?.id ?? nextEntryId();
-  history.replaceState({ ...history.state, id: entryId }, "", url(link));
+  // A reload keeps the entry's state, which says how the page was left.
+  const saved = history.state ?? {};
+  entryId = saved.id ?? nextEntryId();
+  entries.set(entryId, { scroll: saved.scroll, regions: saved.regions });
+  history.replaceState({ ...saved, id: entryId }, "", url(link));
   // Back and Forward restore a page as it was left once it is drawn, which the browser cannot do
   // itself, since every page is drawn in place.
   history.scrollRestoration = "manual";
@@ -190,7 +194,9 @@ async function boot() {
   document.getElementById("main").hidden = false;
   document.getElementById("controls").hidden = false;
   wireControls();
+  restoreRegions(saved.regions);
   render();
+  if (saved.scroll) scrollTo(0, saved.scroll);
 }
 
 // Configuration and loading
@@ -296,7 +302,7 @@ function go(action) {
 // since that state belongs to the page being left, or restored as a history entry left it.
 function enter(next, saved = undefined) {
   startAfresh();
-  for (const [name, region] of Object.entries(regions)) if (saved?.[name] !== undefined) region.restore?.(saved[name]);
+  restoreRegions(saved);
   clearTimeout(zoomTimer);
   zoomTimer = 0;
   gesture = null;
@@ -327,8 +333,16 @@ function remember(record) {
   entries.set(entryId, { ...entries.get(entryId), ...record });
 }
 
+// Writes the entry's record, with its regions as they are now, since a region that expanded may
+// not have scrolled since.
 function persistEntry() {
+  remember({ regions: snapshot() });
   history.replaceState({ ...history.state, ...entries.get(entryId), id: entryId }, "");
+}
+
+/** @param {Record<string, unknown> | undefined} saved */
+function restoreRegions(saved) {
+  for (const [name, region] of Object.entries(regions)) if (saved?.[name] !== undefined) region.restore?.(saved[name]);
 }
 
 // What each region would restore of its own state, by region name.

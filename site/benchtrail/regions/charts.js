@@ -343,6 +343,7 @@ export function chartsRegion(page) {
               onclick: () => {
                 moversShown += MOVERS_PAGE;
                 renderCharts();
+                page.saveEntry();
               },
             },
             `Show ${Math.min(MOVERS_PAGE, ordered.length - moversShown)} more`,

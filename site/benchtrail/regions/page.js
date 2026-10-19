@@ -24,6 +24,7 @@
  * @property {(action: import("../core/selection.js").Navigation) => void} go opens the page a navigation leads to
  * @property {(action: import("../core/selection.js").Navigation) => string} href the address of the page a navigation leads to
  * @property {(action: import("../core/selection.js").Navigation, attributes: Record<string, unknown>, ...children: Array<Node | string | null>) => HTMLAnchorElement} anchor
+ * @property {() => void} saveEntry writes what a region expanded to the history entry, for its `snapshot` to outlast a reload
  * @property {() => void} render
  * @property {(index: number, pin?: boolean) => void} selectRun
  * @property {(index: number | null) => void} preview

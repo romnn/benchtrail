@@ -200,6 +200,7 @@ export function runsRegion(page) {
     document.getElementById("more").addEventListener("click", () => {
       shown += PAGE_SIZE;
       renderHistory();
+      page.saveEntry();
     });
     document.getElementById("only-changes").addEventListener("change", (event) => {
       shown = PAGE_SIZE;
