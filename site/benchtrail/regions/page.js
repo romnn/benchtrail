@@ -6,6 +6,8 @@
 // pages that list the region.
 // A region may also offer `reset`, to start its own state afresh for a new suite, section, or
 // page, and `leave`, to release what it holds while its page is not shown.
+// One that expands, such as a list showing more rows, offers `snapshot` and `restore`, so a
+// history entry returns to it as it was left.
 
 /**
  * @typedef {object} Page

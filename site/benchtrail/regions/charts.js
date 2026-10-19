@@ -407,6 +407,16 @@ export function chartsRegion(page) {
     moversShown = MOVERS_PAGE;
   }
 
+  // A history entry keeps how many rows its movers table showed.
+  function snapshot() {
+    return moversShown;
+  }
+
+  /** @param {unknown} saved */
+  function restore(saved) {
+    if (typeof saved === "number" && Number.isFinite(saved)) moversShown = Math.max(MOVERS_PAGE, saved);
+  }
+
   // A page without charts releases them, with everything their instances hold.
   function leave() {
     for (const chart of charts) page.runtime.unmount(chart);
@@ -419,5 +429,5 @@ export function chartsRegion(page) {
     if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
   }
 
-  return { roots: ["charts-area"], render: renderCharts, updateReadouts, refreshMovers, markSelection, reset, leave };
+  return { roots: ["charts-area"], render: renderCharts, updateReadouts, refreshMovers, markSelection, reset, leave, snapshot, restore };
 }

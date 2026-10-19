@@ -154,28 +154,32 @@ async function boot() {
   for (const s of suites) for (const problem of s.problems.keys()) console.warn(`benchtrail: ${s.name}: ${problem}`);
 
   link = settle(suites, link);
-  publish();
-  // Back and Forward restore a page's scroll position once it is drawn, which the browser cannot
-  // do itself, since every page is drawn in place.
-  // Each history entry keeps its position as the reader scrolls, written after a pause, since
-  // browsers limit how often an entry can be replaced.
+  entryId = history.state?.id ?? nextEntryId();
+  history.replaceState({ ...history.state, id: entryId }, "", url(link));
+  // Back and Forward restore a page as it was left once it is drawn, which the browser cannot do
+  // itself, since every page is drawn in place.
   history.scrollRestoration = "manual";
   window.addEventListener(
     "scroll",
     () => {
+      remember({ scroll: scrollY });
       clearTimeout(scrollTimer);
-      scrollTimer = setTimeout(rememberScroll, 150);
+      scrollTimer = setTimeout(persistEntry, 150);
     },
     { passive: true },
   );
   window.addEventListener(
     "popstate",
     safely((event) => {
-      // A position still waiting to be written belongs to the entry just left.
+      // The entry just left can no longer be written, so it is remembered in memory alone.
       clearTimeout(scrollTimer);
-      enter(parseLink(location.search));
-      publish();
-      scrollTo(0, event.state?.scroll ?? 0);
+      remember({ scroll: scrollY, regions: snapshot() });
+      entryId = event.state?.id ?? nextEntryId();
+      const saved = entries.get(entryId) ?? event.state ?? {};
+      enter(parseLink(location.search), saved.regions);
+      history.replaceState({ ...history.state, id: entryId }, "", url(link));
+      refreshAnchors();
+      scrollTo(0, saved.scroll ?? 0);
     }),
   );
 
@@ -265,20 +269,22 @@ function smoothing() {
 // window the reader sees; the page is then drawn whole, since the window changed too.
 function dispatch(action, draw = render) {
   const redraw = commitGesture() ? render : draw;
-  if (action.type === "suite" || action.type === "section") resetRegions();
+  if (action.type === "suite" || action.type === "section") startAfresh();
   link = settle(suites, reduce(link, action));
   publish();
   redraw();
 }
 
 // Opens another page, as a navigation: the address bar gains an entry that Back returns from, and
-// the entry it leaves keeps its scroll position.
+// the entry it leaves keeps the page as it was left, including a zoom gesture made just before.
 function go(action) {
-  commitGesture();
+  if (commitGesture()) publish();
   clearTimeout(scrollTimer);
-  rememberScroll();
+  remember({ scroll: scrollY, regions: snapshot() });
+  persistEntry();
   enter(reduce(link, action));
-  history.pushState(null, "", url(link));
+  entryId = nextEntryId();
+  history.pushState({ id: entryId }, "", url(link));
   refreshAnchors();
   scrollTo(0, 0);
   // Focus moves to the new page's heading, or to the project's name on the overview, so a
@@ -287,9 +293,10 @@ function go(action) {
 }
 
 // Shows the page a link opens, with every region's own state and any pending work started afresh,
-// since that state belongs to the page being left.
-function enter(next) {
-  resetRegions();
+// since that state belongs to the page being left, or restored as a history entry left it.
+function enter(next, saved = undefined) {
+  startAfresh();
+  for (const [name, region] of Object.entries(regions)) if (saved?.[name] !== undefined) region.restore?.(saved[name]);
   clearTimeout(zoomTimer);
   zoomTimer = 0;
   gesture = null;
@@ -297,14 +304,43 @@ function enter(next) {
   render();
 }
 
+// History entries
+//
+// Each entry carries an id in its state, under which the page remembers how the entry was left:
+// its scroll position, and what its regions had expanded, such as how many runs the list shows.
+// The record changes in memory at once, and is written to the entry after a pause, since browsers
+// limit how often an entry can be replaced; the written copy outlasts a reload.
+
+/** @type {Map<string, { scroll?: number, regions?: Record<string, unknown> }>} */
+const entries = new Map();
+const pageLoad = Date.now().toString(36);
+let entryCount = 0;
+let entryId = "";
 let scrollTimer = 0;
 
-function rememberScroll() {
-  history.replaceState({ ...history.state, scroll: scrollY }, "");
+function nextEntryId() {
+  entryCount += 1;
+  return `${pageLoad}.${entryCount}`;
 }
 
-function resetRegions() {
+function remember(record) {
+  entries.set(entryId, { ...entries.get(entryId), ...record });
+}
+
+function persistEntry() {
+  history.replaceState({ ...history.state, ...entries.get(entryId), id: entryId }, "");
+}
+
+// What each region would restore of its own state, by region name.
+function snapshot() {
+  return Object.fromEntries(Object.entries(regions).flatMap(([name, region]) => (region.snapshot ? [[name, region.snapshot()]] : [])));
+}
+
+// Starts the state that belongs to one suite, section, or page afresh: each region's own, and any
+// drag in progress, which kept chart instances would otherwise end in the new view.
+function startAfresh() {
   for (const region of Object.values(regions)) region.reset?.();
+  runtime.cancelDrags();
 }
 
 // Writes the link to the address bar, replacing the current entry, since changing what the page

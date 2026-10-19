@@ -219,5 +219,15 @@ export function runsRegion(page) {
     clearTimeout(searchTimer);
   }
 
-  return { roots: ["runs"], render, markHistorySelection, wire, reset };
+  // A history entry keeps how many runs its list showed, so its scroll position finds them again.
+  function snapshot() {
+    return shown;
+  }
+
+  /** @param {unknown} saved */
+  function restore(saved) {
+    if (typeof saved === "number" && Number.isFinite(saved)) shown = Math.max(PAGE_SIZE, saved);
+  }
+
+  return { roots: ["runs"], render, markHistorySelection, wire, reset, snapshot, restore };
 }
