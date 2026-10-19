@@ -10,8 +10,10 @@
 import { BASELINE_RUNS, median, relative } from "./benchtrail/core/detect.js";
 import { displayUnit, formatDate, formatDateTime, formatTick, formatValue, timeFormat } from "./benchtrail/core/format.js";
 import { buildSuite, readSettings, safeUrl, suiteSettings, valueText } from "./benchtrail/core/history.js";
-import { linkPart, MISSING, token } from "./benchtrail/core/identity.js";
+import { linkPart, MISSING, token, urlText } from "./benchtrail/core/identity.js";
+import { AXES, admits, formatLink, parseLink, RANGES, SCALES, SMOOTHING } from "./benchtrail/core/link.js";
 import { compareOrder, unique } from "./benchtrail/core/list.js";
+import { reduce, selection } from "./benchtrail/core/selection.js";
 import { changeElement, h, icon } from "./benchtrail/dom.js";
 
 const echarts = window.echarts;
@@ -30,68 +32,32 @@ const MOVER_ENDS = 5;
 const SLOTS = 8;
 const DASHES = ["solid", "dashed", "dotted"];
 
-const RANGES = [
-  { key: "30", label: "Last 30", count: 30 },
-  { key: "100", label: "Last 100", count: 100 },
-  { key: "all", label: "All", count: Infinity },
-];
-const SCALES = [
-  { key: "absolute", label: "Absolute" },
-  { key: "change", label: "Change" },
-];
-// Window sizes for the rolling median, in runs; odd, so each window centers on its run.
-const SMOOTHING = [
-  { key: 0, label: "Off" },
-  { key: 5, label: "5 runs" },
-  { key: 11, label: "11 runs" },
-  { key: 21, label: "21 runs" },
-];
 const READOUTS = [
   { key: "basic", label: "Value and change" },
   { key: "detailed", label: "With spread and baseline" },
 ];
-const AXES = [
-  { key: "run", label: "By run" },
-  { key: "date", label: "By date" },
-];
 
 const config = readConfig();
 const narrow = matchMedia("(max-width: 720px)");
-const state = {
-  suite: null,
-  section: null,
-  range: "all",
-  scale: "absolute",
-  axis: "run",
-  hiddenMetrics: new Set(),
-  // Dimension key to the set of value tokens that are filtered out.
-  hidden: new Map(),
-  // Undefined picks automatically, an empty string means none, otherwise a dimension key.
-  colorBy: undefined,
-  dashBy: undefined,
-  run: null,
-  zoom: null,
-  query: "",
+// What the page shows, as its link says it.
+// It changes only through `dispatch`, which also writes it to the address bar.
+/** @type {import("./benchtrail/core/link.js").LinkState} */
+let link = parseLink(location.search);
+
+// Conveniences of this reader's session that a link leaves out.
+const ui = {
+  // How many runs the run list shows.
   shown: PAGE_SIZE,
-  pending: null,
-  list: false,
-  onlyChanges: false,
-  sort: null,
-  more: false,
-  options: false,
-  notes: false,
-  // Rolling median window in runs, or 0 for raw values; a suite's config may set the default.
-  smooth: null,
-  // The open filter menu, as { key, focus, query }, or null.
-  menu: null,
-  allCharts: false,
-  // Undefined picks charts or movers by the number of lines.
-  layout: undefined,
   moversShown: MOVERS_PAGE,
-  // The changes list is a one-line summary until opened; open shows the latest few, all shows every one.
-  changes: "closed",
   // Charts whose readout shows every line.
   openReadouts: new Set(),
+  options: false,
+  notes: false,
+  // The open filter menu, as { key, focus, query, scroll }, or null.
+  menu: null,
+  // The zoom window as a gesture left it, in percent of the x axis, while the link still holds the
+  // window it was committed as; see `zoom`.
+  gesture: null,
 };
 
 let data = null;
@@ -131,12 +97,8 @@ async function boot() {
   }
   for (const s of suites) for (const problem of s.problems.keys()) console.warn(`benchtrail: ${s.name}: ${problem}`);
 
-  readUrl();
-  suite = suites.find((s) => s.name === state.suite) ?? suites[0];
-  state.suite = suite.name;
-  section = findSection(suite, state.section);
-  state.section = sectionWanted(section);
-  applyPendingUrl();
+  link = settle(link);
+  publish();
 
   // Canvas text keeps whatever font is ready when it draws, so wait briefly for the web font.
   await Promise.race([document.fonts?.ready, new Promise((resolve) => setTimeout(resolve, 1500))]);
@@ -216,39 +178,39 @@ function dashable(d, colorDim) {
 }
 
 // The configured default window, when it is one of the offered sizes.
-function defaultSmoothing() {
-  const configured = Number(suite?.settings.smoothing ?? 0);
+function defaultSmoothing(s = suite) {
+  const configured = Number(s?.settings.smoothing ?? 0);
   return SMOOTHING.some((option) => option.key === configured) ? configured : 0;
 }
 
 // The smoothing window in effect: the reader's choice, or the current suite's default until the
 // reader picks one, so switching suites follows each suite's own default.
 function smoothing() {
-  return state.smooth ?? defaultSmoothing();
+  return link.smoothing.kind === "explicit" ? link.smoothing.window : defaultSmoothing();
 }
 
 // Picks which dimension colors the lines, which sets their dash, and which split the charts.
 // Every varying dimension that neither colors nor dashes splits the charts, so no two lines in one
 // chart ever look the same.
-function choosePivot() {
-  const varying = section.dims.filter((d) => d.varying);
+function choosePivot(at = section, from = link) {
+  const varying = at.dims.filter((d) => d.varying);
   const size = (d) => d.values.length;
   const pick = (choice, configured, allowed, auto) => {
-    if (choice === "") return null;
-    if (choice && allowed.some((d) => d.key === choice)) return choice;
+    if (choice.kind === "none") return null;
+    if (choice.kind === "by" && allowed.some((d) => d.key === choice.key)) return choice.key;
     if (typeof configured === "string" && allowed.some((d) => d.key === configured)) return configured;
     return auto();
   };
 
   const colorChoices = varying.filter(colorable);
-  const color = pick(state.colorBy, section.settings.colorBy, colorChoices, () => {
+  const color = pick(from.color, at.settings.colorBy, colorChoices, () => {
     const fits = colorChoices.filter((d) => size(d) <= SLOTS);
     if (fits.length) return fits.reduce((best, d) => (size(d) > size(best) ? d : best)).key;
     return colorChoices.length ? colorChoices.reduce((best, d) => (size(d) < size(best) ? d : best)).key : null;
   });
   const colorDim = varying.find((d) => d.key === color);
   const dashChoices = varying.filter((d) => d.key !== color && dashable(d, colorDim));
-  const dash = pick(state.dashBy, section.settings.dashBy, dashChoices, () => {
+  const dash = pick(from.dash, at.settings.dashBy, dashChoices, () => {
     if (!colorDim || !dashChoices.length) return null;
     return dashChoices.reduce((best, d) => (size(d) < size(best) ? d : best)).key;
   });
@@ -257,23 +219,24 @@ function choosePivot() {
 }
 
 function computeView() {
-  const range = RANGES.find((r) => r.key === state.range) ?? RANGES.at(-1);
-  const offset = Math.max(0, suite.runs.length - range.count);
-  const runs = suite.runs.slice(offset);
+  suite = suites.find((s) => s.name === link.suite) ?? suites[0];
+  section = findSection(suite, link.section);
+  const runs = rangeRuns(suite, link.range);
+  const offset = suite.runs.length - runs.length;
   const pivot = choosePivot();
-  const metrics = section.metrics.filter((m) => !state.hiddenMetrics.has(m.key));
+  const metrics = section.metrics.filter((m) => admits(link.metrics, m.slug));
   const dimsByKey = new Map(section.dims.map((d) => [d.key, d]));
   // A hover index belongs to the previous view's runs, so it never carries over.
   resetHover();
 
-  const passes = (dims) => section.dims.every((d) => !state.hidden.get(d.key)?.has(token(dims[d.key])));
+  const passes = (dims) => section.dims.every((d) => admits(link.dimensions.get(d.key), urlText(dims[d.key])));
 
   // Each line keeps the runs in range that its trace owns, in run order, so per-line work scales
   // with its own observations rather than with every run.
   const lines = [];
   for (const trace of section.traces) {
     const history = trace.history;
-    if (state.hiddenMetrics.has(history.metric.key) || !passes(trace.dims)) continue;
+    if (!admits(link.metrics, history.metric.slug) || !passes(trace.dims)) continue;
     const points = [];
     for (const i of trace.own) if (i >= offset) points.push(i);
     if (!points.some((i) => history.values[i] !== null)) continue;
@@ -318,7 +281,8 @@ function computeView() {
     }
   }
 
-  let selected = runs.findIndex((run) => state.run && run.key === state.run);
+  const pinned = link.run;
+  let selected = pinned.kind === "at" ? runs.findIndex((run) => run.key === pinned.key) : -1;
   if (selected < 0) selected = runs.length - 1;
   view = { runs, offset, benches: lines, metrics, baseline, boundaries, selected, pivot, counts: null, moves: null };
 }
@@ -391,6 +355,89 @@ function verdict(metric, change) {
   return "noise";
 }
 
+// The runs a range keeps, newest last.
+function rangeRuns(s, rangeKey) {
+  const range = RANGES.find((r) => r.key === rangeKey) ?? RANGES[RANGES.length - 1];
+  return s.runs.slice(Math.max(0, s.runs.length - range.count));
+}
+
+// Changing the link
+
+// Applies the reader's action to the link, settles the result against the data, writes it to the
+// address bar, and then draws what changed: the whole page unless the caller names less.
+function dispatch(action, draw = render) {
+  link = settle(reduce(link, action));
+  publish();
+  draw();
+}
+
+// Writes the link to the address bar, replacing the current entry, since changing what the page
+// shows is not a navigation.
+function publish() {
+  const query = formatLink(link);
+  history.replaceState(history.state, "", `${location.pathname}${query ? `?${query}` : ""}`);
+}
+
+// Settles a link against the data, so it names only what exists and leaves out what follows from
+// the data anyway:
+// - the first suite and section stay implicit, and an unknown one falls back to the first;
+// - filters keep only values that exist, and a filter keeping all of them is dropped;
+// - a color or dash choice the pivot cannot honor is dropped;
+// - an explicit smoothing window equal to the suite's default follows the default;
+// - a selected run that is the newest, or outside the range, follows the newest run;
+// - a window that names runs outside the range is clipped, and one covering it all is dropped.
+function settle(next) {
+  const s = suites.find((candidate) => candidate.name === next.suite) ?? suites[0];
+  const at = findSection(s, next.section);
+  const settled = { ...next };
+  settled.suite = s === suites[0] ? null : s.name;
+  settled.section = s.sections.length > 1 && at !== s.sections[0] ? sectionRef(at) : null;
+
+  // Filters
+  if (next.metrics.kind === "only") {
+    const slugs = at.metrics.map((m) => m.slug);
+    settled.metrics = selection(
+      slugs.filter((slug) => next.metrics.values.has(slug)),
+      slugs,
+    );
+  }
+  const dimensions = new Map();
+  for (const d of at.dims) {
+    const filter = next.dimensions.get(d.key);
+    if (!filter || filter.kind === "all") continue;
+    const params = d.values.map((v) => v.param);
+    const kept = selection(
+      params.filter((param) => filter.values.has(param)),
+      params,
+    );
+    if (kept.kind === "only") dimensions.set(d.key, kept);
+  }
+  settled.dimensions = dimensions;
+
+  // Pivot
+  const pivot = choosePivot(at, settled);
+  if (next.color.kind === "by" && next.color.key !== pivot.color) settled.color = { kind: "auto" };
+  if (next.dash.kind === "by" && next.dash.key !== pivot.dash) settled.dash = { kind: "auto" };
+
+  if (next.smoothing.kind === "explicit" && next.smoothing.window === defaultSmoothing(s)) settled.smoothing = { kind: "configured" };
+
+  // Run and window
+  const runs = rangeRuns(s, next.range);
+  const position = (key) => (key === null ? -1 : runs.findIndex((run) => run.key === key));
+  if (next.run.kind === "at") {
+    const j = position(next.run.key);
+    if (j < 0 || j === runs.length - 1) settled.run = { kind: "latest" };
+  }
+  if (next.window.kind === "between") {
+    const from = Math.max(0, position(next.window.from));
+    const to = position(next.window.to);
+    const end = to < 0 ? runs.length - 1 : to;
+    settled.window =
+      runs.length === 0 || (from === 0 && end === runs.length - 1) ? { kind: "full" } : { kind: "between", from: runs[from].key, to: runs[end].key };
+  }
+  return settled;
+}
+
 // Rendering
 
 // A render requested while another is running, such as from a chart event that a render itself
@@ -416,7 +463,6 @@ function render() {
     renderMessage();
     renderHistory();
     renderNotes();
-    writeUrl();
   } catch (error) {
     reportFailure(error);
   } finally {
@@ -501,9 +547,8 @@ function renderSuites() {
           "aria-selected": String(s === suite),
           onclick: () => {
             if (s === suite) return;
-            suite = s;
-            state.suite = s.name;
-            switchSection(s.sections[0]);
+            resetSectionUi();
+            dispatch({ type: "suite", suite: s.name });
           },
         },
         s.name,
@@ -522,7 +567,11 @@ function renderSuites() {
           class: "option",
           role: "tab",
           "aria-selected": String(s === section),
-          onclick: () => s !== section && switchSection(s),
+          onclick: () => {
+            if (s === section) return;
+            resetSectionUi();
+            dispatch({ type: "section", section: sectionRef(s) });
+          },
         },
         s.label,
       ),
@@ -537,7 +586,7 @@ function renderSuites() {
 // section holds it once it gains dimensions.
 function findSection(s, wanted) {
   if (!wanted) return s.sections[0];
-  if (wanted.link !== undefined) {
+  if (wanted.kind === "benchmark") {
     return (
       s.sections.find((candidate) => candidate.link === wanted.link) ??
       s.sections.find((candidate) =>
@@ -552,54 +601,26 @@ function findSection(s, wanted) {
   return exact ?? keyed.find((candidate) => keys.every((key) => candidate.keys.includes(key))) ?? s.sections[0];
 }
 
-// Section keys in a link, escaped when they could read as a benchmark link.
-function sectionKeyText(key) {
-  return key.startsWith("#") || key.startsWith("s:") ? `s:${key}` : key;
+/** @returns {import("./benchtrail/core/link.js").SectionRef} */
+function sectionRef(s) {
+  return s.link === null ? { kind: "keys", keys: s.keys } : { kind: "benchmark", link: s.link };
 }
 
-function sectionWanted(s) {
-  return s.link === null ? { keys: s.keys } : { link: s.link };
-}
-
-function switchSection(next) {
-  section = next;
-  state.section = sectionWanted(next);
-  state.hiddenMetrics = new Set();
-  state.hidden.clear();
-  state.menu = null;
-  state.layout = undefined;
-  state.moversShown = MOVERS_PAGE;
-  state.colorBy = undefined;
-  state.dashBy = undefined;
-  state.run = null;
-  state.zoom = null;
-  state.sort = null;
-  render();
+// A new section closes its filter menu and starts its movers table at the first page.
+function resetSectionUi() {
+  ui.menu = null;
+  ui.moversShown = MOVERS_PAGE;
 }
 
 function renderFilters() {
-  segmented("range", RANGES, state.range, (key) => {
-    state.range = key;
-    state.zoom = null;
-    render();
-  });
-  segmented("scale", SCALES, state.scale, (key) => {
-    state.scale = key;
-    render();
-  });
-  segmented("axis", AXES, state.axis, (key) => {
-    state.axis = key;
-    render();
-  });
-  segmented("smooth", SMOOTHING, smoothing(), (key) => {
-    state.smooth = key;
-    render();
-  });
+  segmented("range", RANGES, link.range, (key) => dispatch({ type: "range", range: key }));
+  segmented("scale", SCALES, link.scale, (key) => dispatch({ type: "set", changes: { scale: key } }));
+  // The window keeps its place on the axis, so after a change of axis it covers the runs found at
+  // the same positions on the new one.
+  segmented("axis", AXES, link.axis, (key) => dispatch({ type: "set", changes: { axis: key, window: windowAt(zoom(), key) } }));
+  segmented("smooth", SMOOTHING, smoothing(), (key) => dispatch({ type: "set", changes: { smoothing: { kind: "explicit", window: key } } }));
   renderTheme();
-  segmented("readout", READOUTS, state.more ? "detailed" : "basic", (key) => {
-    state.more = key === "detailed";
-    render();
-  });
+  segmented("readout", READOUTS, link.more ? "detailed" : "basic", (key) => dispatch({ type: "set", changes: { more: key === "detailed" } }));
 
   // Color and dash choices list the dimensions with few enough values to style apart, the same
   // ones the pivot accepts, plus none.
@@ -609,31 +630,28 @@ function renderFilters() {
   const colorChoices = varying.filter(colorable);
   const dashChoices = varying.filter((d) => d.key !== view.pivot.color && dashable(d, colorDim));
   document.getElementById("color-group").hidden = colorChoices.length === 0;
-  segmented("color", choices(colorChoices), view.pivot.color ?? "", (key) => {
-    state.colorBy = key;
-    render();
-  });
+  segmented("color", choices(colorChoices), view.pivot.color ?? "", (key) =>
+    dispatch({ type: "set", changes: { color: key ? { kind: "by", key } : { kind: "none" } } }),
+  );
   document.getElementById("dash-group").hidden = dashChoices.length === 0 || !view.pivot.color;
-  segmented("dash", choices(dashChoices), view.pivot.dash ?? "", (key) => {
-    state.dashBy = key;
-    render();
-  });
+  segmented("dash", choices(dashChoices), view.pivot.dash ?? "", (key) =>
+    dispatch({ type: "set", changes: { dash: key ? { kind: "by", key } : { kind: "none" } } }),
+  );
 
-  // Each filter is a list of values that can be toggled.
+  // Each filter is a list of values that can be toggled, each named by its link id.
   // The color and dash dimensions stay inline, since their rows double as the legend; every other
   // filter collapses into a menu, so the header stays one or two lines however many dimensions
   // a suite has.
   const filters = [];
   if (section.metrics.length > 1) {
+    const ids = section.metrics.map((metric) => metric.slug);
     filters.push({
       key: "\u0000metric",
       label: "Metric",
       inline: section.metrics.length <= 4,
-      items: section.metrics.map((metric) => ({ token: metric.key, text: metric.label, style: null })),
-      hidden: state.hiddenMetrics,
-      setHidden: (tokens) => {
-        state.hiddenMetrics = tokens;
-      },
+      items: section.metrics.map((metric) => ({ id: metric.slug, text: metric.label, style: null })),
+      shown: (id) => admits(link.metrics, id),
+      show: (selected, draw) => dispatch({ type: "metrics", metrics: selection(selected, ids) }, draw),
     });
   }
   for (const d of section.dims.filter((d) => d.values.length > 1)) {
@@ -643,19 +661,28 @@ function renderFilters() {
       if (d.key === view.pivot.dash) return { slot: null, dash: DASHES[value.index % DASHES.length] };
       return null;
     };
+    const ids = d.values.map((value) => value.param);
     filters.push({
       key: d.key,
       label: d.label,
       inline: legend,
-      items: d.values.map((value) => ({ token: value.token, text: value.token === MISSING ? "none" : value.text, style: style(value) })),
-      hidden: state.hidden.get(d.key) ?? new Set(),
-      setHidden: (tokens) => state.hidden.set(d.key, tokens),
+      items: d.values.map((value) => ({ id: value.param, text: value.token === MISSING ? "none" : value.text, style: style(value) })),
+      shown: (id) => admits(link.dimensions.get(d.key), id),
+      show: (selected, draw) => dispatch({ type: "dimension", key: d.key, filter: selection(selected, ids) }, draw),
     });
   }
   // Inline rows first, so the legend keeps its place while menus are opened and closed.
   filters.sort((a, b) => b.inline - a.inline);
   document.getElementById("filters").replaceChildren(...filters.map((filter) => (filter.inline ? inlineFilter(filter) : menuFilter(filter))));
-  if (state.menu) restoreMenu();
+  if (ui.menu) restoreMenu();
+}
+
+// The ids a filter shows after toggling one of them.
+function toggled(filter, id) {
+  const shown = new Set(filter.items.map((item) => item.id).filter(filter.shown));
+  if (shown.has(id)) shown.delete(id);
+  else shown.add(id);
+  return shown;
 }
 
 function inlineFilter(filter) {
@@ -667,15 +694,7 @@ function inlineFilter(filter) {
     h(
       "span",
       { class: "chips" },
-      ...filter.items.map((item) =>
-        toggleChip(item.text, !filter.hidden.has(item.token), item.style, () => {
-          const next = new Set(filter.hidden);
-          if (next.has(item.token)) next.delete(item.token);
-          else next.add(item.token);
-          filter.setHidden(next);
-          render();
-        }),
-      ),
+      ...filter.items.map((item) => toggleChip(item.text, filter.shown(item.id), item.style, () => filter.show(toggled(filter, item.id)))),
     ),
   );
 }
@@ -686,7 +705,7 @@ function inlineFilter(filter) {
 // state and are restored afterwards.
 function menuFilter(filter) {
   const total = filter.items.length;
-  const visible = filter.items.filter((item) => !filter.hidden.has(item.token));
+  const visible = filter.items.filter((item) => filter.shown(item.id));
   const summary =
     visible.length === total
       ? "all"
@@ -695,12 +714,11 @@ function menuFilter(filter) {
         : visible.length <= 2
           ? visible.map((item) => item.text).join(", ")
           : `${visible.length} of ${total}`;
-  const open = state.menu?.key === filter.key;
-  const apply = (next, focus) => {
-    filter.setHidden(next);
+  const open = ui.menu?.key === filter.key;
+  const apply = (selected, focus) => {
     const panel = document.querySelector(`.menu[data-menu="${CSS.escape(filter.key)}"] .menu-panel`);
-    state.menu = { ...state.menu, key: filter.key, focus, scroll: panel?.scrollTop ?? 0 };
-    render();
+    ui.menu = { ...ui.menu, key: filter.key, focus, scroll: panel?.scrollTop ?? 0 };
+    filter.show(selected);
   };
 
   const button = h(
@@ -712,7 +730,7 @@ function menuFilter(filter) {
       "aria-haspopup": "true",
       onclick: () => {
         // Opening or closing a menu changes no data, so only the filters are drawn again.
-        state.menu = open ? null : { key: filter.key, focus: null, query: "", scroll: 0 };
+        ui.menu = open ? null : { key: filter.key, focus: null, query: "", scroll: 0 };
         renderFilters();
       },
     },
@@ -731,31 +749,35 @@ function menuFilter(filter) {
           "aria-label": `Filter ${filter.label} values`,
           "data-focus": "\u0000search",
           oninput: (event) => {
-            state.menu.query = event.target.value;
+            ui.menu.query = event.target.value;
             filterMenuItems(event.target.closest(".menu"));
           },
         })
       : null;
   const all =
     visible.length < total
-      ? h("button", { type: "button", class: "option menu-all", "data-focus": "\u0000all", onclick: () => apply(new Set(), "\u0000all") }, "Show all")
+      ? h(
+          "button",
+          {
+            type: "button",
+            class: "option menu-all",
+            "data-focus": "\u0000all",
+            onclick: () => apply(new Set(filter.items.map((item) => item.id)), "\u0000all"),
+          },
+          "Show all",
+        )
       : null;
   const items = filter.items.map((item) => {
-    const id = `menu-${encodeURIComponent(filter.key)}-${encodeURIComponent(item.token)}`;
+    const id = `menu-${encodeURIComponent(filter.key)}-${encodeURIComponent(item.id)}`;
     return h(
       "div",
       { class: "menu-item", "data-text": item.text.toLowerCase() },
       h("input", {
         type: "checkbox",
         id,
-        checked: !filter.hidden.has(item.token),
-        "data-focus": item.token,
-        onchange: () => {
-          const next = new Set(filter.hidden);
-          if (next.has(item.token)) next.delete(item.token);
-          else next.add(item.token);
-          apply(next, item.token);
-        },
+        checked: filter.shown(item.id),
+        "data-focus": item.id,
+        onchange: () => apply(toggled(filter, item.id), item.id),
       }),
       h("label", { for: id }, item.style ? lineKey(item.style) : null, item.text),
       h(
@@ -764,8 +786,8 @@ function menuFilter(filter) {
           type: "button",
           class: "only",
           "aria-label": `Show only ${item.text}`,
-          "data-focus": `\u0000only\u0000${item.token}`,
-          onclick: () => apply(new Set(filter.items.map((other) => other.token).filter((tok) => tok !== item.token)), item.token),
+          "data-focus": `\u0000only\u0000${item.id}`,
+          onclick: () => apply(new Set([item.id]), item.id),
         },
         "only",
       ),
@@ -783,37 +805,37 @@ function disclosure(button, open, label) {
 }
 
 function filterMenuItems(menu) {
-  const query = (state.menu?.query ?? "").trim().toLowerCase();
+  const query = (ui.menu?.query ?? "").trim().toLowerCase();
   for (const item of menu.querySelectorAll(".menu-item")) item.hidden = Boolean(query) && !item.dataset.text.includes(query);
 }
 
 // Restores the open menu after a render: its search text, its focus, and a position that keeps
 // the panel inside the viewport.
 function restoreMenu() {
-  const menu = [.../** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(".menu"))].find((m) => m.dataset.menu === state.menu.key);
+  const menu = [.../** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(".menu"))].find((m) => m.dataset.menu === ui.menu.key);
   if (!menu) {
-    state.menu = null;
+    ui.menu = null;
     return;
   }
   const search = /** @type {HTMLInputElement | null} */ (menu.querySelector(".menu-search"));
   if (search) {
-    search.value = state.menu.query ?? "";
+    search.value = ui.menu.query ?? "";
     filterMenuItems(menu);
   }
   const panel = /** @type {HTMLElement} */ (menu.querySelector(".menu-panel"));
   const overflow = panel.getBoundingClientRect().right - (document.documentElement.clientWidth - 16);
   if (overflow > 0) panel.style.left = `${-overflow}px`;
-  panel.scrollTop = state.menu.scroll ?? 0;
-  const focus = state.menu.focus;
+  panel.scrollTop = ui.menu.scroll ?? 0;
+  const focus = ui.menu.focus;
   const focusable = /** @type {NodeListOf<HTMLElement>} */ (menu.querySelectorAll("[data-focus]"));
   const target = [...focusable].find((el) => el.dataset.focus === focus) ?? search ?? menu.querySelector("input");
   target?.focus({ preventScroll: true });
 }
 
 function closeMenu(returnFocus) {
-  if (!state.menu) return;
-  const key = state.menu.key;
-  state.menu = null;
+  if (!ui.menu) return;
+  const key = ui.menu.key;
+  ui.menu = null;
   renderFilters();
   if (returnFocus)
     /** @type {HTMLElement | null | undefined} */ (
@@ -869,7 +891,7 @@ function renderTrail() {
 // their counts, so the stack stays as tall as the square root of their sum.
 // A run without any shift gets a short neutral tick, so the trail still shows every run.
 function trailOption(t) {
-  const byDate = state.axis === "date";
+  const byDate = link.axis === "date";
   const counts = view.runs.map((run) => countVerdicts(run));
   const reach = Math.max(1, ...counts.map(({ worse, better, moved }) => Math.sqrt(Math.max(worse + moved, better))));
   const point = (run, y) => (byDate ? [run.date, y] : y);
@@ -943,7 +965,7 @@ function renderCharts() {
     if (cells.size) groups.push({ metric, cells: [...cells.values()] });
   }
   const total = groups.reduce((sum, group) => sum + group.cells.length, 0);
-  if (!state.allCharts && total > CHART_LIMIT) {
+  if (!link.allCharts && total > CHART_LIMIT) {
     let left = CHART_LIMIT;
     for (const group of groups) {
       group.cells = group.cells.slice(0, left);
@@ -988,12 +1010,9 @@ function renderCharts() {
           {
             type: "button",
             class: "option charts-more",
-            onclick: () => {
-              state.allCharts = !state.allCharts;
-              render();
-            },
+            onclick: () => dispatch({ type: "set", changes: { allCharts: !link.allCharts } }),
           },
-          state.allCharts ? `Show the first ${CHART_LIMIT} charts` : `Show all ${total} charts`,
+          link.allCharts ? `Show the first ${CHART_LIMIT} charts` : `Show all ${total} charts`,
         )
       : null;
   if (faceted) {
@@ -1040,10 +1059,10 @@ function renderCharts() {
 // The spread and median columns exist only when expanded, since a fixed table layout keeps the
 // width of hidden columns.
 function buildReadout(chart) {
-  const open = state.openReadouts.has(chart.key);
+  const open = ui.openReadouts.has(chart.key);
   const lines = open ? chart.benches : chart.benches.slice(0, READOUT_ROWS);
   // The spread column appears only for lines that record one.
-  const spread = state.more && chart.benches.some((line) => line.points.some((i) => line.history.ranges[i]));
+  const spread = link.more && chart.benches.some((line) => line.points.some((i) => line.history.ranges[i]));
   chart.readoutItems = lines.map((line) => {
     const cells = { value: h("td", { class: "readout-value" }), change: h("td"), spread: h("td"), median: h("td") };
     const row = h(
@@ -1053,14 +1072,14 @@ function buildReadout(chart) {
       cells.value,
       cells.change,
       spread ? cells.spread : null,
-      state.more ? cells.median : null,
+      link.more ? cells.median : null,
     );
     return { line, cells, row };
   });
   const cols = [h("col"), h("col", { class: "num" }), h("col", { class: "num" })];
   if (spread) cols.push(h("col", { class: "num" }));
-  if (state.more) cols.push(h("col", { class: "num" }));
-  const head = state.more
+  if (link.more) cols.push(h("col", { class: "num" }));
+  const head = link.more
     ? h(
         "thead",
         {},
@@ -1084,8 +1103,8 @@ function buildReadout(chart) {
             type: "button",
             class: "readout-more",
             onclick: () => {
-              if (open) state.openReadouts.delete(chart.key);
-              else state.openReadouts.add(chart.key);
+              if (open) ui.openReadouts.delete(chart.key);
+              else ui.openReadouts.add(chart.key);
               buildReadout(chart);
               renderSelected();
             },
@@ -1110,7 +1129,7 @@ function updateReadouts(run) {
       cells.change.replaceChildren(changeElement(change, kind));
       // A row whose run regressed or improved is emphasized, so the lines that moved stand out.
       cells.value.parentElement.dataset.verdict = kind;
-      if (state.more) {
+      if (link.more) {
         const base = line.history.baselines[run.index];
         const vsBase = value !== null && base ? relative(value, base) : null;
         cells.spread.textContent = rangeAt(line, run.index) ?? "–";
@@ -1121,7 +1140,7 @@ function updateReadouts(run) {
 }
 
 function currentLayout() {
-  if (state.layout) return state.layout;
+  if (link.layout !== "auto") return link.layout;
   return view.benches.length > MOVERS_FROM ? "movers" : "charts";
 }
 
@@ -1144,9 +1163,7 @@ function renderLayoutSwitch() {
           role: "radio",
           "aria-checked": String(option.key === current),
           onclick: () => {
-            if (option.key === current) return;
-            state.layout = option.key;
-            render();
+            if (option.key !== current) dispatch({ type: "set", changes: { layout: option.key } });
           },
         },
         option.label,
@@ -1200,7 +1217,7 @@ function renderMovers(container) {
   ];
 
   const multipleMetrics = view.metrics.length > 1;
-  const body = ordered.slice(0, state.moversShown).map((row) =>
+  const body = ordered.slice(0, ui.moversShown).map((row) =>
     h(
       "tr",
       {
@@ -1236,18 +1253,18 @@ function renderMovers(container) {
     h("tbody", {}, ...body),
   );
   const more =
-    ordered.length > state.moversShown
+    ordered.length > ui.moversShown
       ? h(
           "button",
           {
             type: "button",
             class: "more",
             onclick: () => {
-              state.moversShown += MOVERS_PAGE;
+              ui.moversShown += MOVERS_PAGE;
               renderCharts();
             },
           },
-          `Show ${Math.min(MOVERS_PAGE, ordered.length - state.moversShown)} more`,
+          `Show ${Math.min(MOVERS_PAGE, ordered.length - ui.moversShown)} more`,
         )
       : null;
   container.replaceChildren(...[h("div", { class: "table-wrap" }, table), more].filter(Boolean));
@@ -1284,14 +1301,9 @@ function sparkline(values, kind) {
 
 // Narrows the filters to the chart that holds a line, then shows charts.
 function openLine(line) {
-  for (const key of view.pivot.facet) {
-    const dim = section.dims.find((d) => d.key === key);
-    const keep = token(line.trace.dims[key]);
-    state.hidden.set(key, new Set(dim.values.map((v) => v.token).filter((tok) => tok !== keep)));
-  }
-  if (view.metrics.length > 1) state.hiddenMetrics = new Set(view.metrics.map((m) => m.key).filter((key) => key !== line.metricId));
-  state.layout = "charts";
-  render();
+  const only = (value) => ({ kind: "only", values: new Set([value]) });
+  const dimensions = new Map(view.pivot.facet.map((key) => [key, only(urlText(line.trace.dims[key]))]));
+  dispatch({ type: "focus", metrics: view.metrics.length > 1 ? only(line.history.metric.slug) : null, dimensions });
   document.querySelector(".charts-area")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -1306,7 +1318,7 @@ function directionText(metric) {
 const smoothCache = new WeakMap();
 
 function smoothedCached(line, ys, factor, base) {
-  const key = `${smoothing()}|${state.scale}|${view.offset}|${view.runs.length}|${factor}|${base}`;
+  const key = `${smoothing()}|${link.scale}|${view.offset}|${view.runs.length}|${factor}|${base}`;
   const cached = smoothCache.get(line.trace);
   if (cached?.key === key) return cached.values;
   const values = smoothed(line, ys, smoothing());
@@ -1342,13 +1354,13 @@ function groupMagnitude(group) {
 }
 
 function groupUnitLabel(group) {
-  if (state.scale === "change") return `% since ${formatDate(view.runs[0].date)}`;
+  if (link.scale === "change") return `% since ${formatDate(view.runs[0].date)}`;
   return displayUnit(group.metric.unit, groupMagnitude(group)).label || "value";
 }
 
 function lineOption(metric, benches, t, compact, sharedMagnitude = null, width = 0) {
-  const byDate = state.axis === "date";
-  const asChange = state.scale === "change";
+  const byDate = link.axis === "date";
+  const asChange = link.scale === "change";
   let magnitude = 0;
   let smallest = Infinity;
   for (const bench of benches) {
@@ -1517,18 +1529,22 @@ function createChart(dom) {
     "datazoom",
     safely((/** @type {any} */ event) => {
       if (syncingZoom) return;
-      const zoom = event.batch?.[0] ?? event;
-      if (!Number.isFinite(zoom.start) || !Number.isFinite(zoom.end)) return;
-      state.zoom = { start: zoom.start, end: zoom.end };
+      const moved = event.batch?.[0] ?? event;
+      if (!Number.isFinite(moved.start) || !Number.isFinite(moved.end)) return;
+      ui.gesture = { start: moved.start, end: moved.end, window: link.window };
       syncZoom(instance);
       clearTimeout(zoomTimer);
+      // Once the gesture pauses, its window is committed to the link as the runs at its ends.
       zoomTimer = setTimeout(
         safely(() => {
-          renderChanges();
-          renderHistory();
-          // The movers table ranks lines over the window, so it follows the window once it settles.
-          if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
-          writeUrl();
+          const gesture = ui.gesture;
+          dispatch({ type: "set", changes: { window: windowAt(gesture, link.axis) } }, () => {
+            gesture.window = link.window;
+            renderChanges();
+            renderHistory();
+            // The movers table ranks lines over the window, so it follows the window once it settles.
+            if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
+          });
         }),
         250,
       );
@@ -1611,7 +1627,7 @@ function placePointer(instance, at) {
         return;
       }
       const run = view.runs[at];
-      const x = instance.convertToPixel({ xAxisIndex: 0 }, state.axis === "date" ? run.date : `r${run.index}`);
+      const x = instance.convertToPixel({ xAxisIndex: 0 }, link.axis === "date" ? run.date : `r${run.index}`);
       if (Number.isFinite(x)) instance.dispatchAction({ type: "showTip", x, y: instance.getHeight() / 2 });
     });
   } finally {
@@ -1638,12 +1654,13 @@ function syncZoom(source) {
   if (zoomFrame) return;
   zoomFrame = requestAnimationFrame(() => {
     zoomFrame = 0;
-    const key = `${state.zoom?.start}|${state.zoom?.end}|${charts.length}`;
+    const current = zoom();
+    const key = `${current.start}|${current.end}|${charts.length}`;
     if (key === appliedZoom) return;
     appliedZoom = key;
     // A gesture on a chart moves its own window, but its value axis still needs refitting.
     pendingZoom.clear();
-    const window = { start: state.zoom?.start ?? 0, end: state.zoom?.end ?? 100 };
+    const window = { start: current.start, end: current.end };
     syncingZoom = true;
     try {
       if (trail && !trail.isDisposed() && trail !== zoomSource) guarded(() => trail.setOption({ dataZoom: [window, window] }, { silent: true }));
@@ -1659,7 +1676,7 @@ function syncZoom(source) {
     clearTimeout(offscreenTimer);
     offscreenTimer = setTimeout(
       safely(() => {
-        for (const chart of pendingZoom) applyZoom(chart, { start: state.zoom?.start ?? 0, end: state.zoom?.end ?? 100 });
+        for (const chart of pendingZoom) applyZoom(chart, zoom());
         pendingZoom.clear();
       }),
       200,
@@ -1790,7 +1807,7 @@ function crosshair(t) {
 
 function xAxis(t, { line, width }) {
   const label = { color: t.muted, fontSize: 11, hideOverlap: true };
-  if (state.axis === "date") {
+  if (link.axis === "date") {
     return {
       type: "time",
       axisLine: { show: line, lineStyle: { color: t.rule } },
@@ -1850,14 +1867,14 @@ function runLabels(width) {
 }
 
 function dataZoom(t, slider) {
-  const zoom = state.zoom ?? { start: 0, end: 100 };
+  const { start, end } = zoom();
   // Plain wheel scrolling keeps moving the page; zooming needs a modifier or a pinch, which
   // browsers report as a wheel event with the control key held.
   const inside = {
     type: "inside",
     filterMode: "none",
-    start: zoom.start,
-    end: zoom.end,
+    start,
+    end,
     zoomOnMouseWheel: "ctrl",
     moveOnMouseWheel: "shift",
     // Dragging selects a range to zoom into instead of panning; see wireDragZoom.
@@ -1869,8 +1886,8 @@ function dataZoom(t, slider) {
     {
       type: "slider",
       filterMode: "none",
-      start: zoom.start,
-      end: zoom.end,
+      start,
+      end,
       height: 16,
       bottom: 2,
       left: 0,
@@ -1898,7 +1915,7 @@ function dataZoom(t, slider) {
 // It always returns a mark line, even an empty one, so a merged update clears stale rules.
 // With labels, each boundary names what it changed to, such as `rustc 1.97.0`.
 function markers(t, { labels = false, selection = true } = {}) {
-  const x = (run) => (state.axis === "date" ? run.date : `r${run.index}`);
+  const x = (run) => (link.axis === "date" ? run.date : `r${run.index}`);
   const rules = view.runs
     .filter((run) => view.boundaries.has(run.index))
     .map((run) => ({
@@ -1946,7 +1963,7 @@ function observeSize(dom, instance) {
 
 // Maps an x-axis value to a run position: a category index, or the nearest run in date mode.
 function indexAtX(x) {
-  if (state.axis !== "date") return Math.round(Number(x));
+  if (link.axis !== "date") return Math.round(Number(x));
   let index = 0;
   for (let j = 1; j < view.runs.length; j += 1) {
     if (Math.abs(view.runs[j].date - x) < Math.abs(view.runs[index].date - x)) index = j;
@@ -1998,18 +2015,19 @@ function showDetails(index) {
 function selectRun(index) {
   const clamped = Math.min(view.runs.length - 1, Math.max(0, index));
   if (clamped === view.selected) return;
-  view.selected = clamped;
-  state.run = view.runs[clamped].key;
-  const t = theme();
-  const marker = markers(t, { selection: clamped !== view.runs.length - 1 });
-  trail?.setOption({ series: [{ id: "trail", markLine: markers(t, { labels: true }) }] });
-  for (const chart of charts) {
-    chart.instance.setOption({ series: [{ id: chart.benches[0].name, markLine: marker }] });
-  }
-  renderSelected();
-  renderMessage();
-  markHistorySelection();
-  writeUrl();
+  // Selecting a run moves its markers and details in place rather than drawing the page again.
+  dispatch({ type: "set", changes: { run: { kind: "at", key: view.runs[clamped].key } } }, () => {
+    view.selected = clamped;
+    const t = theme();
+    const marker = markers(t, { selection: clamped !== view.runs.length - 1 });
+    trail?.setOption({ series: [{ id: "trail", markLine: markers(t, { labels: true }) }] });
+    for (const chart of charts) {
+      chart.instance.setOption({ series: [{ id: chart.benches[0].name, markLine: marker }] });
+    }
+    renderSelected();
+    renderMessage();
+    markHistorySelection();
+  });
 }
 
 // The visible lines that regressed or improved at a run, regressions first, then by size.
@@ -2057,12 +2075,8 @@ function renderChanges() {
     entries.push({ run: view.runs[j], j });
   }
 
-  const open = state.changes !== "closed" && entries.length > 0;
-  const setChanges = (value) => {
-    state.changes = value;
-    renderChanges();
-    writeUrl();
-  };
+  const open = link.changes !== "closed" && entries.length > 0;
+  const setChanges = (value) => dispatch({ type: "set", changes: { changes: value } }, renderChanges);
   const summary = h(
     "button",
     {
@@ -2089,7 +2103,7 @@ function renderChanges() {
     return;
   }
 
-  const shown = state.changes === "all" ? entries : entries.slice(0, CHANGES_SHOWN);
+  const shown = link.changes === "all" ? entries : entries.slice(0, CHANGES_SHOWN);
   const items = shown.map(({ run, j }) => {
     const moves = significantMoves(run);
     return h(
@@ -2119,8 +2133,8 @@ function renderChanges() {
     entries.length > CHANGES_SHOWN
       ? h(
           "button",
-          { type: "button", class: "changes-more", onclick: () => setChanges(state.changes === "all" ? "open" : "all") },
-          state.changes === "all" ? "Show fewer" : `Show all ${entries.length}`,
+          { type: "button", class: "changes-more", onclick: () => setChanges(link.changes === "all" ? "open" : "all") },
+          link.changes === "all" ? "Show fewer" : `Show all ${entries.length}`,
         )
       : null;
   container.replaceChildren(...[summary, h("ul", { class: "change-list" }, ...items), more].filter(Boolean));
@@ -2292,15 +2306,16 @@ function marked(text, marks) {
 // History table: opt-in, searchable, and sortable by any benchmark's change
 
 function renderHistory() {
-  const open = state.list;
+  const open = link.list;
   document.getElementById("history").hidden = !open;
-  /** @type {HTMLInputElement} */ (document.getElementById("only-changes")).checked = state.onlyChanges;
+  /** @type {HTMLInputElement} */ (document.getElementById("only-changes")).checked = link.onlyChanges;
   disclosure(document.getElementById("list-toggle"), open, open ? "Hide runs" : `All ${suite.runs.length} runs`);
   if (!open) return;
 
   const table = document.getElementById("history-table");
-  const tokens = searchTokens(state.query);
-  const sortLine = state.sort && view.benches.find((b) => b.sortKey === state.sort.bench);
+  const tokens = searchTokens(link.query);
+  const sort = link.sort;
+  const sortLine = sort && view.benches.find((b) => b.sortKey === sort.line);
 
   // The list follows the zoom window, so it always shows the runs the charts show.
   const { first, last } = zoomWindow();
@@ -2311,16 +2326,16 @@ function renderHistory() {
   let runs = view.runs
     .map((run, j) => ({ run, j }))
     .filter(({ j }) => j >= first && j <= last)
-    .map((entry) => ({ ...entry, match: tokens.length ? searchRun(entry.run, tokens, state.query) : null }))
+    .map((entry) => ({ ...entry, match: tokens.length ? searchRun(entry.run, tokens, link.query) : null }))
     .filter(({ match }) => !tokens.length || match)
-    .filter(({ run }) => !state.onlyChanges || significant(run));
+    .filter(({ run }) => !link.onlyChanges || significant(run));
   if (tokens.length && !sortLine) {
     // Search results rank by relevance, newest first among equals.
     runs.sort((a, b) => b.match.tier - a.match.tier || b.match.score - a.match.score || b.j - a.j);
   } else if (sortLine) {
     // Worst first sorts by regression size, best first by improvement size; runs without a
     // change for this benchmark go last either way.
-    const sign = state.sort.order === "best" ? -1 : 1;
+    const sign = sort.order === "best" ? -1 : 1;
     const key = ({ run }) => badness(sortLine.history.metric, changeAt(sortLine, run.index));
     runs.sort((a, b) => Number(key(a) === null) - Number(key(b) === null) || sign * (key(b) - key(a)));
   } else {
@@ -2329,7 +2344,7 @@ function renderHistory() {
 
   const sortButton = (line, label) => {
     const active = sortLine === line;
-    const marker = active ? icon(state.sort.order === "best" ? "up" : "down", "sort-icon") : null;
+    const marker = active ? icon(sort.order === "best" ? "up" : "down", "sort-icon") : null;
     return h(
       "button",
       {
@@ -2338,12 +2353,11 @@ function renderHistory() {
         "aria-pressed": String(active),
         title: "Sort by change: worst first, then best first, then by date",
         onclick: () => {
-          if (!active) state.sort = { bench: line.sortKey, order: "worst" };
-          else if (state.sort.order === "worst") state.sort = { bench: line.sortKey, order: "best" };
-          else state.sort = null;
-          state.shown = PAGE_SIZE;
-          renderHistory();
-          writeUrl();
+          /** @type {import("./benchtrail/core/link.js").Sort | null} */
+          let next = { line: line.sortKey, order: "worst" };
+          if (active) next = sort.order === "worst" ? { line: line.sortKey, order: "best" } : null;
+          ui.shown = PAGE_SIZE;
+          dispatch({ type: "set", changes: { sort: next } }, renderHistory);
         },
       },
       label,
@@ -2371,7 +2385,7 @@ function renderHistory() {
   );
 
   const body = h("tbody", {});
-  for (const { run, j, match } of runs.slice(0, state.shown)) {
+  for (const { run, j, match } of runs.slice(0, ui.shown)) {
     const cells = wide
       ? [h("td", { class: "moves-cell" }, movesElement(significantMoves(run), 4))]
       : view.benches.map((line) => {
@@ -2401,8 +2415,8 @@ function renderHistory() {
   table.replaceChildren(head, body);
 
   const more = document.getElementById("more");
-  more.hidden = runs.length <= state.shown;
-  more.textContent = `Show ${Math.min(PAGE_SIZE, runs.length - state.shown)} more`;
+  more.hidden = runs.length <= ui.shown;
+  more.textContent = `Show ${Math.min(PAGE_SIZE, runs.length - ui.shown)} more`;
 }
 
 // Search
@@ -2516,17 +2530,15 @@ function renderNotes() {
     {
       type: "button",
       class: "option",
-      "aria-expanded": String(state.notes),
+      "aria-expanded": String(ui.notes),
       onclick: () => {
-        state.notes = !state.notes;
+        ui.notes = !ui.notes;
         renderNotes();
       },
     },
     `${count} ${count === 1 ? "problem" : "problems"} reading this suite`,
   );
-  const list = state.notes
-    ? h("ul", { class: "notes-list" }, ...problems.map(([message, n]) => h("li", {}, n > 1 ? `${message} (${n} times)` : message)))
-    : null;
+  const list = ui.notes ? h("ul", { class: "notes-list" }, ...problems.map(([message, n]) => h("li", {}, n > 1 ? `${message} (${n} times)` : message))) : null;
   container.replaceChildren(...[button, list].filter(Boolean));
 }
 
@@ -2534,48 +2546,40 @@ function renderNotes() {
 
 function wireControls() {
   const search = /** @type {HTMLInputElement} */ (document.getElementById("search"));
-  search.value = state.query;
+  search.value = link.query;
   // Searching waits for a short pause in typing, so a long history is not searched per keystroke.
   let searchTimer = 0;
   search.addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(
       safely(() => {
-        state.query = search.value;
-        state.shown = PAGE_SIZE;
-        renderHistory();
-        writeUrl();
+        ui.shown = PAGE_SIZE;
+        dispatch({ type: "set", changes: { query: search.value } }, renderHistory);
       }),
       120,
     );
   });
   document.getElementById("more").addEventListener("click", () => {
-    state.shown += PAGE_SIZE;
+    ui.shown += PAGE_SIZE;
     renderHistory();
   });
   wireSettings();
-  document.getElementById("list-toggle").addEventListener("click", () => {
-    state.list = !state.list;
-    renderHistory();
-    writeUrl();
-  });
+  document.getElementById("list-toggle").addEventListener("click", () => dispatch({ type: "set", changes: { list: !link.list } }, renderHistory));
   document.getElementById("only-changes").addEventListener("change", (event) => {
-    state.onlyChanges = /** @type {HTMLInputElement} */ (event.target).checked;
-    state.shown = PAGE_SIZE;
-    renderHistory();
-    writeUrl();
+    ui.shown = PAGE_SIZE;
+    dispatch({ type: "set", changes: { onlyChanges: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
   });
   narrow.addEventListener("change", () => renderHistory());
   // A click outside the open menu closes it.
   // A click inside can re-render the menu, which detaches the clicked node, so those are skipped.
   document.addEventListener("click", (event) => {
     const target = /** @type {Element} */ (event.target);
-    if (!state.menu || !target.isConnected || target.closest(".menu")) return;
+    if (!ui.menu || !target.isConnected || target.closest(".menu")) return;
     closeMenu(false);
   });
   // Arrow keys step through runs unless a control has focus.
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.menu) {
+    if (event.key === "Escape" && ui.menu) {
       closeMenu(true);
       return;
     }
@@ -2625,17 +2629,17 @@ function wireSettings() {
   const panel = document.getElementById("settings");
   toggle.replaceChildren(icon("gear"));
   const set = (open) => {
-    state.options = open;
+    ui.options = open;
     panel.hidden = !open;
     toggle.setAttribute("aria-expanded", String(open));
   };
-  toggle.addEventListener("click", () => set(!state.options));
+  toggle.addEventListener("click", () => set(!ui.options));
   document.addEventListener("click", (event) => {
     const target = /** @type {Element} */ (event.target);
-    if (state.options && target.isConnected && !target.closest(".settings")) set(false);
+    if (ui.options && target.isConnected && !target.closest(".settings")) set(false);
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.options) {
+    if (event.key === "Escape" && ui.options) {
       set(false);
       toggle.focus();
     }
@@ -2643,206 +2647,41 @@ function wireSettings() {
   set(false);
 }
 
-// URL state: every view is a shareable link.
-// The theme is a personal preference kept in this browser, so it never enters a link.
-// Parameters at their default are left out, and runs are named by commit, so a link keeps
-// pointing at the same runs as the history grows.
-// A dimension filter uses the dimension's name as its parameter, or `d.<name>` when the name is
-// one of the page's own parameters.
-// List values are separated by literal commas and each value is percent-encoded, so a value that
-// contains a comma survives the round trip.
-
-const URL_KEYS = new Set([
-  "data",
-  "suite",
-  "section",
-  "view",
-  "runs",
-  "metrics",
-  "values",
-  "x",
-  "color",
-  "dash",
-  "smooth",
-  "from",
-  "to",
-  "run",
-  "more",
-  "charts",
-  "changes",
-  "list",
-  "q",
-  "only",
-  "sort",
-  "order",
-]);
-
-function dimensionParam(key) {
-  return URL_KEYS.has(key) || key.startsWith("d.") ? `d.${key}` : key;
-}
-
-function writeUrl() {
-  const parts = [];
-  const add = (key, value) => parts.push(`${encodeQuery(key)}=${encodeQuery(value)}`);
-  const addList = (key, values) => parts.push(`${encodeQuery(key)}=${values.map(encodeQuery).join(",")}`);
-
-  const dataParam = readQuery().get("data");
-  if (dataParam !== undefined) add("data", dataParam);
-  if (suites.length > 1 && suite !== suites[0]) add("suite", state.suite);
-  if (suite.sections.length > 1 && section !== suite.sections[0]) {
-    if (section.link === null) addList("section", section.keys.map(sectionKeyText));
-    else add("section", section.link);
-  }
-  if (state.range !== "all") add("runs", state.range);
-  // Visible sets rather than hidden ones, so a link names exactly what it shows.
-  // An empty selection is written as `~`, which no value's link text can be.
-  const visibleList = (key, values) => (values.length ? addList(key, values) : add(key, "~"));
-  if (state.hiddenMetrics.size)
-    visibleList(
-      "metrics",
-      section.metrics.filter((m) => !state.hiddenMetrics.has(m.key)).map((m) => m.slug),
-    );
-  for (const d of section.dims) {
-    const hidden = state.hidden.get(d.key);
-    if (hidden?.size)
-      visibleList(
-        dimensionParam(d.key),
-        d.values.filter((v) => !hidden.has(v.token)).map((v) => v.param),
-      );
-  }
-  // A choice the pivot could not honor stays out of the link.
-  if (state.colorBy !== undefined && (state.colorBy || null) === view.pivot.color) add("color", state.colorBy || "~");
-  if (state.dashBy !== undefined && (state.dashBy || null) === view.pivot.dash) add("dash", state.dashBy || "~");
-  if (state.scale !== "absolute") add("values", state.scale);
-  if (state.smooth !== null && state.smooth !== defaultSmoothing()) add("smooth", String(state.smooth));
-  if (state.axis !== "run") add("x", state.axis);
-  const zoom = zoomedRuns();
-  if (zoom) {
-    add("from", zoom.from.key);
-    add("to", zoom.to.key);
-  }
-  const run = view.runs[view.selected];
-  if (run && view.selected !== view.runs.length - 1) add("run", run.key);
-  if (state.layout) add("view", state.layout);
-  if (state.more) add("more", "1");
-  if (state.allCharts) add("charts", "all");
-  if (state.changes !== "closed") add("changes", state.changes);
-  if (state.list) {
-    add("list", "1");
-    if (state.query.trim()) add("q", state.query.trim());
-    if (state.onlyChanges) add("only", "changes");
-    if (state.sort) {
-      add("sort", state.sort.bench);
-      if (state.sort.order !== "worst") add("order", state.sort.order);
-    }
-  }
-  const query = parts.join("&");
-  history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}`);
-}
-
-// Slashes and colons are legal in a query, and leaving them unescaped keeps links readable.
-function encodeQuery(text) {
-  return encodeURIComponent(text).replace(/%2F/gi, "/").replace(/%3A/gi, ":").replace(/%20/g, "+");
-}
-
-function decodeQuery(text) {
-  try {
-    return decodeURIComponent(text.replace(/\+/g, " "));
-  } catch {
-    return text;
-  }
-}
-
-// The query as raw values by name, first occurrence winning, so list values can be split on
-// their literal commas before decoding.
-function readQuery() {
-  const raw = new Map();
-  for (const part of location.search.replace(/^\?/, "").split("&")) {
-    if (!part) continue;
-    const at = part.indexOf("=");
-    const key = decodeQuery(at < 0 ? part : part.slice(0, at));
-    if (!raw.has(key)) raw.set(key, at < 0 ? "" : part.slice(at + 1));
-  }
-  return {
-    has: (key) => raw.has(key),
-    get: (key) => (raw.has(key) ? decodeQuery(raw.get(key)) : undefined),
-    list: (key) => (raw.has(key) ? raw.get(key).split(",").map(decodeQuery) : undefined),
-  };
-}
-
-function readUrl() {
-  const query = readQuery();
-  state.suite = query.get("suite") ?? null;
-  const sectionParam = query.get("section");
-  if (sectionParam === undefined) state.section = null;
-  else if (sectionParam.startsWith("#")) state.section = { link: sectionParam };
-  else state.section = { keys: query.list("section").map((key) => (key.startsWith("s:") ? key.slice(2) : key)) };
-  if (RANGES.some((r) => r.key === query.get("runs"))) state.range = query.get("runs");
-  if (SCALES.some((s) => s.key === query.get("values"))) state.scale = query.get("values");
-  if (AXES.some((a) => a.key === query.get("x"))) state.axis = query.get("x");
-  state.run = query.get("run") ?? null;
-  state.more = query.get("more") === "1";
-  state.allCharts = query.get("charts") === "all";
-  if (["charts", "movers"].includes(query.get("view"))) state.layout = query.get("view");
-  state.changes = ["open", "all"].includes(query.get("changes")) ? query.get("changes") : "closed";
-  state.list = query.get("list") === "1";
-  const smooth = Number(query.get("smooth"));
-  if (SMOOTHING.some((option) => option.key === smooth)) state.smooth = smooth;
-  state.query = query.get("q") ?? "";
-  state.onlyChanges = query.get("only") === "changes";
-  if (query.get("sort")) state.sort = { bench: query.get("sort"), order: query.get("order") === "best" ? "best" : "worst" };
-  state.pending = { query, from: query.get("from"), to: query.get("to") };
-}
-
-// Applies the parts of the URL that name things inside a section, once the section is known.
-function applyPendingUrl() {
-  const pending = state.pending;
-  state.pending = null;
-  if (!pending) return;
-  const { query } = pending;
-  const choice = (key) => {
-    const value = query.get(key);
-    if (value === undefined) return undefined;
-    if (value === "~") return "";
-    return section.dims.some((d) => d.key === value && d.varying) ? value : undefined;
-  };
-  state.colorBy = choice("color");
-  state.dashBy = choice("dash");
-  const visibleList = (key) => (query.get(key) === "~" ? [] : query.list(key));
-  const metrics = visibleList("metrics");
-  if (metrics) {
-    for (const metric of section.metrics) if (!metrics.includes(metric.slug)) state.hiddenMetrics.add(metric.key);
-  }
-  for (const d of section.dims) {
-    const visible = visibleList(dimensionParam(d.key));
-    if (!visible) continue;
-    state.hidden.set(d.key, new Set(d.values.filter((v) => !visible.includes(v.param)).map((v) => v.token)));
-  }
-  if (pending.from || pending.to) {
-    computeView();
-    const find = (key) => view.runs.findIndex((run) => run.key === key);
-    const from = find(pending.from);
-    const to = find(pending.to);
-    state.zoom = { start: from < 0 ? 0 : percentOfRun(from), end: to < 0 ? 100 : percentOfRun(to) };
-  }
-}
-
 // Zoom windows are percentages of the x axis, which spans run positions or dates.
-function percentOfRun(j) {
+function percentOfRun(j, axis = link.axis) {
   const runs = view.runs;
   if (runs.length < 2) return 0;
-  if (state.axis === "date") {
+  if (axis === "date") {
     const span = runs.at(-1).date - runs[0].date;
     return span > 0 ? ((runs[j].date - runs[0].date) / span) * 100 : 0;
   }
   return (j / (runs.length - 1)) * 100;
 }
 
-function runAtPercent(percent) {
+function runAtPercent(percent, axis = link.axis) {
   const runs = view.runs;
-  if (state.axis !== "date") return runs[Math.round((percent / 100) * (runs.length - 1))];
+  if (axis !== "date") return runs[Math.round((percent / 100) * (runs.length - 1))];
   const target = runs[0].date + (percent / 100) * (runs.at(-1).date - runs[0].date);
   return runs.reduce((best, run) => (Math.abs(run.date - target) < Math.abs(best.date - target) ? run : best));
+}
+
+// The zoom window in percent of the x axis: as a gesture left it, until the link's window changes
+// for another reason, otherwise the positions of the runs the link names.
+function zoom() {
+  if (ui.gesture && ui.gesture.window === link.window) return ui.gesture;
+  const window = link.window;
+  if (window.kind === "full" || view.runs.length === 0) return { start: 0, end: 100 };
+  const position = (key) => view.runs.findIndex((run) => run.key === key);
+  const from = position(window.from);
+  const to = position(window.to);
+  return { start: from < 0 ? 0 : percentOfRun(from), end: to < 0 ? 100 : percentOfRun(to) };
+}
+
+// The link's window for a zoom window in percent of an axis: the runs at its ends.
+/** @returns {import("./benchtrail/core/link.js").PlotWindow} */
+function windowAt({ start, end }, axis) {
+  if ((start <= 0 && end >= 100) || view.runs.length === 0) return { kind: "full" };
+  return { kind: "between", from: runAtPercent(start, axis).key, to: runAtPercent(end, axis).key };
 }
 
 // The view positions of the first and last run in the zoom window, computed once per window and
@@ -2850,21 +2689,22 @@ function runAtPercent(percent) {
 let windowCache = null;
 
 function zoomWindow() {
-  const key = `${state.zoom?.start}|${state.zoom?.end}|${state.axis}`;
+  const current = zoom();
+  const key = `${current.start}|${current.end}|${link.axis}`;
   if (windowCache?.view === view && windowCache.key === key) return windowCache;
-  const zoom = zoomedRuns();
+  const zoomed = zoomedRuns();
   // Runs in a view are consecutive, so a run's position is its index past the view's offset.
-  const first = zoom ? zoom.from.index - view.offset : 0;
-  const last = zoom ? zoom.to.index - view.offset : view.runs.length - 1;
+  const first = zoomed ? zoomed.from.index - view.offset : 0;
+  const last = zoomed ? zoomed.to.index - view.offset : view.runs.length - 1;
   windowCache = { view, key, first, last };
   return windowCache;
 }
 
 // The first and last run inside the zoom window, or null when nothing is zoomed.
 function zoomedRuns() {
-  if (!state.zoom || (state.zoom.start <= 0 && state.zoom.end >= 100)) return null;
-  if (view.runs.length === 0) return null;
-  return { from: runAtPercent(state.zoom.start), to: runAtPercent(state.zoom.end) };
+  const { start, end } = zoom();
+  if ((start <= 0 && end >= 100) || view.runs.length === 0) return null;
+  return { from: runAtPercent(start), to: runAtPercent(end) };
 }
 
 // Helpers

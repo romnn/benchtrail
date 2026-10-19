@@ -1,7 +1,16 @@
 // What a link says: the page's shareable state, and how it reads from and writes to a query
 // string.
+// Every view is a shareable link; only the theme, a personal preference kept in the browser,
+// never enters one.
 // A link is read without the data, so it keeps what it names even when the data no longer has
 // it; resolving names against the data is the view's job.
+//
+// Parameters at their default are left out, and runs are named by commit, so a link keeps
+// pointing at the same runs as the history grows.
+// A dimension filter uses the dimension's name as its parameter, or `d.<name>` when the name is
+// one of the page's own parameters.
+// List values are separated by literal commas and each value is percent-encoded, so a value that
+// contains a comma survives the round trip.
 
 /**
  * Every value, including values that appear later; or exactly the listed ones, by link text.
