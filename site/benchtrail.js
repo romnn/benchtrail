@@ -384,7 +384,7 @@ function publish() {
 // - a dimension filter outside the section is dropped;
 // - a color or dash choice the pivot cannot honor is dropped;
 // - an explicit smoothing window equal to the suite's default follows the default;
-// - a selected run that is the newest, or outside the range, follows the newest run;
+// - a selected run outside the range follows the newest run;
 // - a window that names runs outside the range is clipped, and one covering it all is dropped.
 function settle(next) {
   const s = suites.find((candidate) => candidate.name === next.suite) ?? suites[0];
@@ -411,10 +411,7 @@ function settle(next) {
   // Run and window
   const runs = rangeRuns(s, next.range);
   const position = (key) => (key === null ? -1 : runs.findIndex((run) => run.key === key));
-  if (next.run.kind === "at") {
-    const j = position(next.run.key);
-    if (j < 0 || j === runs.length - 1) settled.run = { kind: "latest" };
-  }
+  if (next.run.kind === "at" && position(next.run.key) < 0) settled.run = { kind: "latest" };
   if (next.window.kind === "between") {
     const from = Math.max(0, position(next.window.from));
     const to = position(next.window.to);
@@ -1997,11 +1994,15 @@ function showDetails(index) {
   hoverFrame = requestAnimationFrame(renderSelected);
 }
 
-function selectRun(index) {
+// Choosing a run pins it, even the newest, so a link keeps showing it as runs are added; without
+// `pin`, the page follows the newest run instead.
+function selectRun(index, pin = true) {
   const clamped = Math.min(view.runs.length - 1, Math.max(0, index));
-  if (clamped === view.selected) return;
+  /** @type {import("./benchtrail/core/link.js").RunSelection} */
+  const run = pin ? { kind: "at", key: view.runs[clamped].key } : { kind: "latest" };
+  if (clamped === view.selected && link.run.kind === run.kind) return;
   // Selecting a run moves its markers and details in place rather than drawing the page again.
-  dispatch({ type: "set", changes: { run: { kind: "at", key: view.runs[clamped].key } } }, () => {
+  dispatch({ type: "set", changes: { run } }, () => {
     view.selected = clamped;
     const t = theme();
     const marker = markers(t, { selection: clamped !== view.runs.length - 1 });
@@ -2189,6 +2190,18 @@ function renderSelected() {
       { class: "run-facts" },
       `${run.author}, ${formatDateTime(run.date)}`,
       boundary ? h("span", { class: "boundary", title: "Changes are not compared across this run" }, boundary.join(", ")) : null,
+      link.run.kind === "at" && shown === view.selected
+        ? h(
+            "button",
+            {
+              type: "button",
+              class: "follow",
+              title: "Show the newest run, and keep following new ones",
+              onclick: () => selectRun(view.runs.length - 1, false),
+            },
+            "Follow newest",
+          )
+        : null,
     ),
   );
   updateReadouts(run);

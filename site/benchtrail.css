@@ -815,6 +815,17 @@ main {
   color: var(--muted);
 }
 
+/* Unpins the selected run; a link-like action that shows its hover like the other quiet controls. */
+.run-facts .follow {
+  margin-left: 12px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.run-facts .follow:hover {
+  text-decoration: underline;
+}
+
 /* Commit message of the selected run */
 
 .message {
