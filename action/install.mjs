@@ -21,15 +21,19 @@ export const SETTINGS_FILE = "benchtrail.json";
  */
 
 /**
+ * The history to install: the text of a `data.js`, none at all, or the one the directory holds.
+ * @typedef {{ text: string } | "none" | "keep"} History
+ */
+
+/**
  * Installs the dashboard into `dir`, with `settings` as its settings, or with the ones the
- * directory already holds when `settings` is null, and with `history` as its `data.js`, or with
- * the one the directory already holds when `history` is null.
+ * directory already holds when `settings` is null, and with `history` as its history.
  * Settings are checked first, so a directory never ends up with a page and settings that break a
  * rule.
- * @param {{ dir: string, settings: string | null, history?: string | null }} options
+ * @param {{ dir: string, settings: string | null, history?: History }} options
  * @returns {Promise<Outcome>}
  */
-export async function install({ dir, settings, history = null }) {
+export async function install({ dir, settings, history = "keep" }) {
   const settingsPath = path.join(dir, SETTINGS_FILE);
   const existing = await readIfPresent(settingsPath);
   const text = settings ?? existing;
@@ -59,11 +63,14 @@ export async function install({ dir, settings, history = null }) {
   if (settings !== null) await writeFile(settingsPath, `${JSON.stringify(raw, null, 2)}\n`);
   else if (existing === null) await writeFile(settingsPath, "{}\n");
   // The history is written as received; the page loads it as a script, and nothing here runs it.
-  if (history !== null) await writeFile(path.join(dir, "data.js"), history);
+  // Without one, an earlier history goes, so the page never shows results the source no longer has.
+  if (history === "none") await rm(path.join(dir, "data.js"), { force: true });
+  else if (history !== "keep") await writeFile(path.join(dir, "data.js"), history.text);
 
   /** @type {string[]} */
   const warnings = [];
-  if (config.dataUrl === null && !(await present(path.join(dir, "data.js")))) {
+  // A history kept from the directory may be missing; a fetched one, or none, the caller reports.
+  if (history === "keep" && config.dataUrl === null && !(await present(path.join(dir, "data.js")))) {
     warnings.push(`${dir} holds no data.js, so the dashboard has no history to show.`);
   }
   return { problems: [], warnings };

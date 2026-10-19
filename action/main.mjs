@@ -45,8 +45,8 @@ async function run() {
   if (!dir) return { problems: ["The path input is empty; name the directory to install the dashboard into."], warnings: [] };
 
   // Read the history before anything is installed, so a failed read leaves the directory as it was.
-  /** @type {string | null} */
-  let history = null;
+  /** @type {import("./install.mjs").History} */
+  let history = "keep";
   /** @type {string[]} */
   const warnings = [];
   if (flag("fetch-history", true)) {
@@ -59,10 +59,11 @@ async function run() {
     };
     try {
       const fetched = await fetchHistory(source);
-      history = fetched.text;
+      history = { text: fetched.text };
       console.log(`Read the history from ${source.repository}@${fetched.commit}.`);
     } catch (error) {
       if (!(error instanceof MissingHistory) || !flag("allow-missing-history", false)) return { problems: [error.message], warnings };
+      history = "none";
       warnings.push(`${error.message} The dashboard is installed without a history.`);
     }
   }

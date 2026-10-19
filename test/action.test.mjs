@@ -42,18 +42,21 @@ function runMain(inputs) {
 }
 
 /**
- * A stand-in for GitHub's REST API that answers from `routes`, by path and query, with a status
- * and a body; every request it receives is recorded in `requests`.
+ * A stand-in for GitHub's REST API that answers from `routes`, by path and query, with a status,
+ * a body, and any headers, or with status 0 a connection that drops partway through the body;
+ * every request it receives is recorded in `requests`.
  * @param {import("node:test").TestContext} t
- * @param {Record<string, Array<[number, string]>>} routes answers per request, used in turn
+ * @param {Record<string, Array<[number, string, Record<string, string>?]>>} routes answers per request, used in turn
  */
 async function fakeGitHub(t, routes) {
   /** @type {import("node:http").IncomingMessage[]} */
   const requests = [];
   const server = createServer((request, response) => {
     requests.push(request);
-    const [status, body] = routes[request.url]?.shift() ?? [404, '{"message":"Not Found"}'];
-    response.writeHead(status).end(body);
+    const [status, body, headers = {}] = routes[request.url]?.shift() ?? [404, '{"message":"Not Found"}'];
+    // Status 0 drops the connection partway through the body.
+    if (status === 0) response.writeHead(200, { "content-length": String(body.length * 2) }).write(body, () => request.socket.destroy());
+    else response.writeHead(status, headers).end(body);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
   t.after(() => server.close());
@@ -62,6 +65,8 @@ async function fakeGitHub(t, routes) {
 }
 
 const HISTORY = "window.BENCHMARK_DATA = { entries: { main: [] } };\n";
+const SHA = "a".repeat(40);
+const BRANCH = JSON.stringify({ name: "gh-pages", commit: { sha: SHA } });
 
 test("an install replaces the page and keeps the history and other files", async (t) => {
   const dir = await pagesDir(t);
@@ -149,11 +154,11 @@ test("a directory that cannot be written fails the step with an annotation", asy
 
 test("the history is read at the branch's latest commit", async (t) => {
   const github = await fakeGitHub(t, {
-    "/repos/romnn/progeny/commits/gh-pages": [[200, "abc123\n"]],
-    "/repos/romnn/progeny/contents/bench/data.js?ref=abc123": [[200, HISTORY]],
+    "/repos/romnn/progeny/branches/gh-pages": [[200, BRANCH]],
+    [`/repos/romnn/progeny/contents/bench/data.js?ref=${SHA}`]: [[200, HISTORY]],
   });
   const source = { api: github.api, repository: "romnn/progeny", branch: "gh-pages", dir: "bench", token: "secret" };
-  assert.deepEqual(await fetchHistory(source), { commit: "abc123", text: HISTORY });
+  assert.deepEqual(await fetchHistory(source), { commit: SHA, text: HISTORY });
   // Every request carries the token and asks for the raw content.
   assert.equal(github.requests[1].headers.authorization, "Bearer secret");
   assert.equal(github.requests[1].headers.accept, "application/vnd.github.raw+json");
@@ -161,7 +166,7 @@ test("the history is read at the branch's latest commit", async (t) => {
 
 test("a missing history and a failed read are told apart, and a server error is retried", async (t) => {
   const source = { repository: "romnn/progeny", branch: "gh-pages", dir: "dev/bench", token: "" };
-  const quick = { tries: 2, pause: 0 };
+  const quick = { tries: 2, pause: 0, limitPause: 0 };
 
   // No branch, or no access: GitHub answers 404 for both.
   const missing = await fakeGitHub(t, {});
@@ -169,16 +174,31 @@ test("a missing history and a failed read are told apart, and a server error is 
 
   // A server error is retried, and the second answer counts.
   const flaky = await fakeGitHub(t, {
-    "/repos/romnn/progeny/commits/gh-pages": [
+    "/repos/romnn/progeny/branches/gh-pages": [
       [502, "bad gateway"],
-      [200, "abc123"],
+      [200, BRANCH],
     ],
-    "/repos/romnn/progeny/contents/dev/bench/data.js?ref=abc123": [[200, HISTORY]],
+    [`/repos/romnn/progeny/contents/dev/bench/data.js?ref=${SHA}`]: [[200, HISTORY]],
   });
   assert.equal((await fetchHistory({ ...source, api: flaky.api }, quick)).text, HISTORY);
 
+  // A branch without the history is missing history too.
+  const noFile = await fakeGitHub(t, { "/repos/romnn/progeny/branches/gh-pages": [[200, BRANCH]] });
+  await assert.rejects(fetchHistory({ ...source, api: noFile.api }, quick), /GitHub has no romnn\/progeny@gh-pages:dev\/bench\/data\.js/);
+
+  // A connection that drops while the history arrives is retried.
+  const dropped = await fakeGitHub(t, {
+    "/repos/romnn/progeny/branches/gh-pages": [[200, BRANCH]],
+    [`/repos/romnn/progeny/contents/dev/bench/data.js?ref=${SHA}`]: [
+      [0, HISTORY],
+      [200, HISTORY],
+    ],
+  });
+  assert.equal((await fetchHistory({ ...source, api: dropped.api }, quick)).text, HISTORY);
+  assert.equal(dropped.requests.length, 3);
+
   // A refused token is final, and not a missing history.
-  const refused = await fakeGitHub(t, { "/repos/romnn/progeny/commits/gh-pages": [[401, "Bad credentials"]] });
+  const refused = await fakeGitHub(t, { "/repos/romnn/progeny/branches/gh-pages": [[401, "Bad credentials"]] });
   await assert.rejects(fetchHistory({ ...source, api: refused.api }, quick), (error) => !(error instanceof MissingHistory) && /401/.test(String(error)));
   assert.equal(refused.requests.length, 1);
 });
@@ -186,8 +206,8 @@ test("a missing history and a failed read are told apart, and a server error is 
 test("the entry point installs the history it reads, and fails when there is none", async (t) => {
   const dir = await pagesDir(t);
   const github = await fakeGitHub(t, {
-    "/repos/romnn/progeny/commits/gh-pages": [[200, "abc123"]],
-    "/repos/romnn/progeny/contents/bench/data.js?ref=abc123": [[200, HISTORY]],
+    "/repos/romnn/progeny/branches/gh-pages": [[200, BRANCH]],
+    [`/repos/romnn/progeny/contents/bench/data.js?ref=${SHA}`]: [[200, HISTORY]],
   });
   const inputs = {
     GITHUB_API_URL: github.api,
@@ -199,18 +219,35 @@ test("the entry point installs the history it reads, and fails when there is non
   };
   const installed = await runMain(inputs);
   assert.equal(installed.status, 0);
-  assert.match(installed.stdout, /Read the history from romnn\/progeny@abc123/);
+  assert.match(installed.stdout, new RegExp(`Read the history from romnn/progeny@${SHA}`));
   assert.equal(await read(dir, "data.js"), HISTORY);
 
   // Without a history on the branch the step fails and leaves the directory as it was, unless a
-  // missing history is allowed.
+  // missing history is allowed; then the earlier history goes too, so no stale results show.
   const before = await read(dir, "index.html");
-  await rm(path.join(dir, "data.js"));
   const failed = await runMain(inputs);
   assert.equal(failed.status, 1);
-  assert.match(failed.stdout, /^::error::GitHub has no romnn\/progeny@gh-pages/m);
+  assert.match(failed.stdout, /^::error::GitHub has no branch romnn\/progeny@gh-pages/m);
   assert.equal(await read(dir, "index.html"), before);
+  assert.equal(await read(dir, "data.js"), HISTORY);
   const allowed = await runMain({ ...inputs, "INPUT_ALLOW-MISSING-HISTORY": "true" });
   assert.equal(allowed.status, 0);
-  assert.match(allowed.stdout, /^::warning::GitHub has no romnn\/progeny@gh-pages.*installed without a history/m);
+  assert.match(allowed.stdout, /^::warning::GitHub has no branch romnn\/progeny@gh-pages.*installed without a history/m);
+  assert.deepEqual((await readdir(dir)).includes("data.js"), false);
+});
+
+test("a rate limit waits until it resets, and a dropped answer is retried", async (t) => {
+  const source = { repository: "romnn/progeny", branch: "gh-pages", dir: "bench", token: "" };
+  const reset = String(Math.ceil(Date.now() / 1000));
+  const github = await fakeGitHub(t, {
+    "/repos/romnn/progeny/branches/gh-pages": [
+      [403, "rate limited", { "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset }],
+      [200, BRANCH],
+    ],
+    [`/repos/romnn/progeny/contents/bench/data.js?ref=${SHA}`]: [[200, HISTORY]],
+  });
+  const started = Date.now();
+  assert.equal((await fetchHistory({ ...source, api: github.api }, { tries: 2, pause: 0, limitPause: 0 })).text, HISTORY);
+  // The retry waited for the reset, plus a second's margin.
+  assert.ok(Date.now() - started >= 900);
 });

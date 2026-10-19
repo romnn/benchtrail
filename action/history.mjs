@@ -12,10 +12,17 @@
  */
 
 /**
- * How requests are retried: how many tries a request gets, and the pause before the first retry,
- * in milliseconds, which doubles with each retry.
- * @typedef {{ tries: number, pause: number }} Retries
+ * How requests are retried: how many tries a request gets, the pause before the first retry,
+ * which doubles with each retry, and the pause after a rate limit that names no time to wait, all
+ * in milliseconds.
+ * @typedef {{ tries: number, pause: number, limitPause: number }} Retries
  */
+
+// GitHub asks to wait at least a minute after a secondary rate limit that names no time.
+const RETRIES = { tries: 3, pause: 1000, limitPause: 60_000 };
+
+// A wait longer than this fails the step rather than holding the runner.
+const LONGEST_WAIT = 5 * 60_000;
 
 // The branch or the file is not there, or the token cannot see the repository: GitHub answers 404
 // for a private repository it does not show the token, so the two cannot be told apart.
@@ -28,12 +35,14 @@ export class MissingHistory extends Error {}
  * @param {Retries} [retries]
  * @returns {Promise<{ commit: string, text: string }>}
  */
-export async function fetchHistory(source, retries = { tries: 3, pause: 1000 }) {
-  const repository = source.repository.split("/").map(encodeURIComponent).join("/");
-  const base = `${source.api.replace(/\/+$/, "")}/repos/${repository}`;
+export async function fetchHistory(source, retries = RETRIES) {
+  const segments = (/** @type {string} */ path) => path.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const base = `${source.api.replace(/\/+$/, "")}/repos/${segments(source.repository)}`;
   const where = `${source.repository}@${source.branch}`;
-  const commit = (await get(source, `${base}/commits/${encodeURIComponent(source.branch)}`, "application/vnd.github.sha", retries, where)).trim();
-  const file = [...source.dir.split("/").filter(Boolean), "data.js"].map(encodeURIComponent).join("/");
+  const branch = JSON.parse(await get(source, `${base}/branches/${segments(source.branch)}`, "application/vnd.github+json", retries, `branch ${where}`));
+  const commit = String(branch.commit?.sha ?? "");
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error(`GitHub named no commit for the branch ${where}.`);
+  const file = `${segments(source.dir)}${source.dir.split("/").some(Boolean) ? "/" : ""}data.js`;
   const text = await get(source, `${base}/contents/${file}?ref=${commit}`, "application/vnd.github.raw+json", retries, `${where}:${file}`);
   return { commit, text };
 }
@@ -53,26 +62,40 @@ async function get(source, url, accept, retries, what) {
   const headers = { accept, "user-agent": "benchtrail", "x-github-api-version": "2022-11-28" };
   if (source.token) headers.authorization = `Bearer ${source.token}`;
   for (let attempt = 1; ; attempt += 1) {
-    /** @type {Response | null} */
-    let response = null;
     let failure = "";
+    let wait = retries.pause * 2 ** (attempt - 1);
     try {
-      response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) });
+      // The body is read inside the attempt, so a connection that drops while it arrives is retried.
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) });
+      const body = await response.text();
+      if (response.ok) return body;
+      if (response.status === 404) throw new MissingHistory(`GitHub has no ${what}, or the token cannot read the repository.`);
+      failure = `GitHub answered ${response.status} ${response.statusText}: ${body.slice(0, 200)}`;
+      const limit = rateLimitWait(response, retries);
+      if (limit === null && response.status < 500) throw new Error(`Reading ${what} failed. ${failure}`);
+      if (limit !== null) wait = limit;
     } catch (error) {
+      if (error instanceof MissingHistory || failure) throw error;
       failure = error.message;
     }
-    if (response?.ok) return response.text();
-    if (response?.status === 404) throw new MissingHistory(`GitHub has no ${what}, or the token cannot read the repository.`);
-    if (response) failure = `GitHub answered ${response.status} ${response.statusText}: ${(await response.text()).slice(0, 200)}`;
-    if (attempt >= retries.tries || (response && !retryable(response))) throw new Error(`Reading ${what} failed. ${failure}`);
-    const after = Number(response?.headers.get("retry-after"));
-    await new Promise((resolve) => setTimeout(resolve, Number.isFinite(after) && after > 0 ? after * 1000 : retries.pause * 2 ** (attempt - 1)));
+    if (attempt >= retries.tries || wait > LONGEST_WAIT) throw new Error(`Reading ${what} failed. ${failure}`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
 }
 
-/** @param {Response} response */
-function retryable(response) {
-  // GitHub answers a rate limit with 429, or with 403 and the limit's headers.
-  const limited = response.status === 403 && (response.headers.has("retry-after") || response.headers.get("x-ratelimit-remaining") === "0");
-  return response.status >= 500 || response.status === 429 || limited;
+/**
+ * How long a rate limit asks to wait, in milliseconds, or null when the answer is no rate limit.
+ * GitHub answers a rate limit with 429, or with 403 and the limit's headers.
+ * @param {Response} response
+ * @param {Retries} retries
+ */
+function rateLimitWait(response, retries) {
+  const after = Number(response.headers.get("retry-after"));
+  const exhausted = response.headers.get("x-ratelimit-remaining") === "0";
+  if (response.status !== 429 && !(response.status === 403 && (after > 0 || exhausted))) return null;
+  if (after > 0) return after * 1000;
+  // An exhausted limit names when it resets, in seconds since the epoch.
+  const reset = Number(response.headers.get("x-ratelimit-reset"));
+  if (exhausted && reset > 0) return Math.max(0, reset * 1000 - Date.now()) + 1000;
+  return retries.limitPause;
 }
