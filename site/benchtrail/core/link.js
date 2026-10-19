@@ -43,6 +43,12 @@
  * @typedef {{ kind: "configured" } | { kind: "explicit", window: number }} SmoothingChoice
  */
 
+/**
+ * The page a link opens: the overview, the full list of runs, or one chart, named by its chart id
+ * (see `chartId` in the view).
+ * @typedef {{ kind: "overview" } | { kind: "runs" } | { kind: "chart", chart: string }} Route
+ */
+
 /** @typedef {"30" | "100" | "all"} RangeKey */
 /** @typedef {"absolute" | "change"} ScaleKey */
 /** @typedef {"run" | "date"} AxisKey */
@@ -52,6 +58,7 @@
 
 /**
  * @typedef {object} LinkState
+ * @property {Route} route
  * @property {string | null} data the history script the page loads, when the link names one
  * @property {string | null} suite null for the first suite
  * @property {SectionRef | null} section null for the suite's first section
@@ -69,9 +76,9 @@
  * @property {boolean} more whether readouts show their detailed columns
  * @property {boolean} allCharts
  * @property {ChangesKey} changes
- * @property {boolean} list whether the run list is open
  * @property {string} query the run list's search
  * @property {boolean} onlyChanges
+ * @property {boolean} inWindow whether the run list keeps to the zoom window
  * @property {Sort | null} sort
  */
 
@@ -103,6 +110,7 @@ export const AXES = /** @type {const} */ ([
 /** @returns {LinkState} */
 export function emptyLink() {
   return {
+    route: { kind: "overview" },
     data: null,
     suite: null,
     section: null,
@@ -120,9 +128,9 @@ export function emptyLink() {
     more: false,
     allCharts: false,
     changes: "closed",
-    list: false,
     query: "",
     onlyChanges: false,
+    inWindow: false,
     sort: null,
   };
 }
@@ -259,6 +267,20 @@ function sectionKeyText(key) {
  * @type {readonly Codec[]}
  */
 const CODECS = [
+  {
+    // A chart page is named by its chart alone, which reads better than a page name beside it.
+    keys: ["page", "chart"],
+    read: (q, link) => {
+      const chart = q.get("chart");
+      if (chart) link.route = { kind: "chart", chart };
+      else link.route = q.get("page") === "runs" ? { kind: "runs" } : { kind: "overview" };
+    },
+    write: (link) => {
+      const route = link.route;
+      if (route.kind === "chart") return [["chart", route.chart]];
+      return route.kind === "runs" ? [["page", "runs"]] : [];
+    },
+  },
   {
     keys: ["data"],
     read: (q, link) => {
@@ -421,25 +443,26 @@ const CODECS = [
     write: (link) => (link.changes === "closed" ? [] : [["changes", link.changes]]),
   },
   {
-    // The run list's search and sort only count while the list is open.
-    keys: ["list", "q", "only", "sort", "order"],
+    // The run list's search, sort, and window only count on the runs page.
+    keys: ["q", "only", "sort", "order", "in"],
     read: (q, link) => {
-      link.list = q.get("list") === "1";
       link.query = q.get("q") ?? "";
       link.onlyChanges = q.get("only") === "changes";
       const line = q.get("sort");
       link.sort = line ? { line, order: q.get("order") === "best" ? "best" : "worst" } : null;
+      link.inWindow = q.get("in") === "window";
     },
     write: (link) => {
-      if (!link.list) return [];
+      if (link.route.kind !== "runs") return [];
       /** @type {Array<[string, string]>} */
-      const pairs = [["list", "1"]];
+      const pairs = [];
       if (link.query.trim()) pairs.push(["q", link.query.trim()]);
       if (link.onlyChanges) pairs.push(["only", "changes"]);
       if (link.sort) {
         pairs.push(["sort", link.sort.line]);
         if (link.sort.order !== "worst") pairs.push(["order", link.sort.order]);
       }
+      if (link.inWindow) pairs.push(["in", "window"]);
       return pairs;
     },
   },

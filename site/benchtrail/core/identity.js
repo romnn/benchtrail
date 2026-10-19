@@ -38,6 +38,16 @@ export function linkPart(text) {
   return String(text).replace(/[%/=#~:,]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }
 
+// Reads back one part of a link id; a part that is not validly escaped reads as written.
+/** @param {string} text */
+export function unlinkPart(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
 // A value as it reads in a link, which depends on the value alone, so a link keeps working as
 // other values appear.
 // Numbers and booleans read as plain text and no value reads as `-`.

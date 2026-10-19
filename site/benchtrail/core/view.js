@@ -5,7 +5,7 @@
 
 import { median, relative } from "./detect.js";
 import { valueText } from "./history.js";
-import { linkPart, token, urlText } from "./identity.js";
+import { linkPart, MISSING, token, unlinkPart, urlText } from "./identity.js";
 import { admits, RANGES, SMOOTHING } from "./link.js";
 import { compareOrder, unique } from "./list.js";
 
@@ -74,6 +74,20 @@ export const DASHES = /** @type {const} */ (["solid", "dashed", "dotted"]);
  * @property {(i: number) => Judgement} judgement
  */
 
+/**
+ * The chart a chart page shows, as its link names it: a metric by link id, and the link text of
+ * its values of the dimensions that split charts.
+ * @typedef {{ metric: string, dims: ReadonlyMap<string, string> }} ChartScope
+ */
+
+/**
+ * A chart page's chart as the data resolves it, for its heading.
+ * `metric` is null, and `dims` keep their link text, for names the data no longer has.
+ * @typedef {object} ChartHeading
+ * @property {Metric | null} metric
+ * @property {Array<{ key: string, label: string, text: string }>} dims
+ */
+
 /** @typedef {{ worse: number, better: number, moved: number, measured: number }} Counts */
 /** @typedef {{ line: Line, change: number, kind: ShiftKind, tentative: boolean }} Move */
 
@@ -86,6 +100,7 @@ export const DASHES = /** @type {const} */ (["solid", "dashed", "dotted"]);
  * @property {Line[]} lines
  * @property {Metric[]} metrics
  * @property {Pivot} pivot
+ * @property {ChartHeading | null} chart the chart a chart page shows, or null on any other page
  * @property {number} selected the position of the selected run in `runs`
  * @property {Map<string, number | null>} firstValues by line key, the first value in range, which anchors the change scale
  * @property {Map<number, string[]>} boundaries by run index, what changed for the visible lines
@@ -153,6 +168,42 @@ export function sectionRef(section) {
   return section.link === null ? { kind: "keys", keys: section.keys } : { kind: "benchmark", link: section.link };
 }
 
+// A chart's id in links: its metric, then its values of the dimensions that split charts, in key
+// order as `key=value` joined by `/`, with every part escaped as in a line's slug.
+// It names a chart by what it shows rather than by its position, so it keeps naming the same chart
+// as runs are added.
+/**
+ * @param {Metric} metric
+ * @param {readonly string[]} keys the dimensions that split charts
+ * @param {Tags} dims the dimensions of any line in the chart
+ */
+export function chartId(metric, keys, dims) {
+  const parts = [...keys].sort().map((key) => `${linkPart(key)}=${linkPart(urlText(dims[key]))}`);
+  return parts.length ? `${linkPart(metric.slug)}:${parts.join("/")}` : linkPart(metric.slug);
+}
+
+// The chart a link's chart page shows, or null on any other page.
+// A part without a value names a value no dimension has, so a damaged link shows nothing rather
+// than more than it names.
+/**
+ * @param {LinkState} link
+ * @returns {ChartScope | null}
+ */
+export function chartScope(link) {
+  if (link.route.kind !== "chart") return null;
+  const id = link.route.chart;
+  const at = id.indexOf(":");
+  /** @type {Map<string, string>} */
+  const dims = new Map();
+  if (at >= 0) {
+    for (const part of id.slice(at + 1).split("/")) {
+      const eq = part.indexOf("=");
+      dims.set(unlinkPart(eq < 0 ? part : part.slice(0, eq)), eq < 0 ? "" : unlinkPart(part.slice(eq + 1)));
+    }
+  }
+  return { metric: unlinkPart(at < 0 ? id : id.slice(0, at)), dims };
+}
+
 /**
  * The suite's configured smoothing window, when it is one of the offered sizes.
  * @param {Suite} suite
@@ -175,6 +226,8 @@ export function smoothingWindow(suite, link) {
 // Settles a link against the data, so it names only what can apply and leaves out what follows
 // from the data anyway:
 // - the first suite and section stay implicit, and an unknown one falls back to the first;
+// - a chart page names its suite and section even when they come first, since its chart belongs
+//   to them and which suite or section comes first can change as more are recorded;
 // - a dimension filter outside the section is dropped;
 // - a color or dash choice the pivot cannot honor is dropped;
 // - an explicit smoothing window equal to the suite's default follows the default;
@@ -189,8 +242,9 @@ export function settle(suites, next) {
   const suite = findSuite(suites, next);
   const section = findSection(suite, next.section);
   const settled = { ...next };
-  settled.suite = suite === suites[0] ? null : suite.name;
-  settled.section = suite.sections.length > 1 && section !== suite.sections[0] ? sectionRef(section) : null;
+  const explicit = next.route.kind === "chart";
+  settled.suite = !explicit && suite === suites[0] ? null : suite.name;
+  settled.section = explicit || (suite.sections.length > 1 && section !== suite.sections[0]) ? sectionRef(section) : null;
 
   // Filters
   /** @type {Map<string, import("./link.js").Filter<string>>} */
@@ -243,13 +297,15 @@ export function dashable(d, colorDim) {
 // Picks which dimension colors the lines, which sets their dash, and which split the charts.
 // Every varying dimension that neither colors nor dashes splits the charts, so no two lines in one
 // chart ever look the same.
+// A chart page fixes the values of the dimensions that split its chart, so those vary no longer.
 /**
  * @param {Section} section
  * @param {LinkState} link
  * @returns {Pivot}
  */
 export function choosePivot(section, link) {
-  const varying = section.dims.filter((d) => d.varying);
+  const fixed = chartScope(link)?.dims;
+  const varying = section.dims.filter((d) => d.varying && !fixed?.has(d.key));
   const size = (/** @type {Dimension} */ d) => d.values.length;
   /**
    * @param {import("./link.js").DimensionChoice} choice
@@ -371,9 +427,20 @@ export function buildView(suites, link) {
   const runs = rangeRuns(suite, link.range);
   const offset = suite.runs.length - runs.length;
   const pivot = choosePivot(section, link);
-  const metrics = section.metrics.filter((m) => admits(link.metrics, m.slug));
   const dimsByKey = new Map(section.dims.map((d) => [d.key, d]));
-  const passes = (/** @type {Tags} */ dims) => section.dims.every((d) => admits(link.dimensions.get(d.key), urlText(dims[d.key])));
+  // A chart page shows its chart's metric and dimension values in place of the filters for them,
+  // and nothing at all when it names a dimension the section lacks.
+  const scope = chartScope(link);
+  const shows = (/** @type {Metric} */ metric) => (scope ? metric.slug === scope.metric : admits(link.metrics, metric.slug));
+  const known = !scope || [...scope.dims.keys()].every((key) => dimsByKey.has(key));
+  const passes = (/** @type {Tags} */ dims) =>
+    known &&
+    section.dims.every((d) => {
+      const text = urlText(dims[d.key]);
+      const fixed = scope?.dims.get(d.key);
+      return fixed === undefined ? admits(link.dimensions.get(d.key), text) : fixed === text;
+    });
+  const metrics = section.metrics.filter(shows);
 
   // Each line keeps the runs in range that its trace owns, in run order, so per-line work scales
   // with its own observations rather than with every run.
@@ -381,7 +448,7 @@ export function buildView(suites, link) {
   const lines = [];
   for (const trace of section.traces) {
     const history = trace.history;
-    if (!admits(link.metrics, history.metric.slug) || !passes(trace.dims)) continue;
+    if (!shows(history.metric) || !passes(trace.dims)) continue;
     const points = [];
     for (const i of trace.own) if (i >= offset) points.push(i);
     if (!points.some((i) => history.values[i] !== null)) continue;
@@ -430,12 +497,27 @@ export function buildView(suites, link) {
     lines,
     metrics,
     pivot,
+    chart: scope ? chartHeading(section, scope) : null,
     selected,
     firstValues,
     boundaries,
     counts: (run) => tally().counts.get(run.index) ?? NO_COUNTS,
     moves: (run) => tally().moves.get(run.index) ?? [],
   };
+}
+
+/**
+ * @param {Section} section
+ * @param {ChartScope} scope
+ * @returns {ChartHeading}
+ */
+function chartHeading(section, scope) {
+  const dims = [...scope.dims].map(([key, text]) => {
+    const d = section.dims.find((candidate) => candidate.key === key);
+    const value = d?.values.find((candidate) => candidate.param === text);
+    return { key, label: d?.label ?? key, text: value ? (value.token === MISSING ? "none" : value.text) : text };
+  });
+  return { metric: section.metrics.find((m) => m.slug === scope.metric) ?? null, dims };
 }
 
 // Counts the judgements and collects the moves of every run at once, the first time anything

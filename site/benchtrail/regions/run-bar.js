@@ -154,5 +154,5 @@ export function runBarRegion(page) {
     renderMessage();
   }
 
-  return { render, renderSelected, subjectElement };
+  return { roots: ["charts-area", "selected"], render, renderSelected, subjectElement };
 }

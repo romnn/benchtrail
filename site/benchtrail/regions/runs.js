@@ -1,9 +1,10 @@
-// The run list: every run in view, searchable and sortable by any line's change.
+// The run list: every run in range on a page of its own, searchable and sortable by any line's
+// change; the overview links to it.
 
 import { formatDateTime, formatValue } from "../core/format.js";
 import { searchRun, searchTokens } from "../core/search.js";
 import { badness } from "../core/view.js";
-import { changeElement, disclosure, h, icon, lineKey } from "../dom.js";
+import { changeElement, h, icon, lineKey } from "../dom.js";
 
 // Runs shown at first, and added by each "show more".
 const PAGE_SIZE = 30;
@@ -11,30 +12,51 @@ const HISTORY_COLUMNS = 6;
 
 /** @param {import("./page.js").Page} page */
 export function runsRegion(page) {
-  // How many runs the list shows.
+  // How many runs the list shows, and the search waiting for a pause in typing.
   let shown = PAGE_SIZE;
+  let searchTimer = 0;
+
+  function render() {
+    const listed = page.link.route.kind === "runs";
+    const count = page.view.runs.length;
+    document
+      .getElementById("runs-link")
+      .replaceChildren(
+        listed
+          ? ""
+          : page.anchor(
+              { type: "open", route: { kind: "runs" } },
+              { class: "wide-toggle" },
+              `All ${count} ${count === 1 ? "run" : "runs"}`,
+              icon("right", "toggle-icon"),
+            ),
+      );
+    document.getElementById("history").hidden = !listed;
+    if (listed) renderHistory();
+  }
 
   function renderHistory() {
-    const open = page.link.list;
-    document.getElementById("history").hidden = !open;
+    const search = /** @type {HTMLInputElement} */ (document.getElementById("search"));
+    if (search.value !== page.link.query && document.activeElement !== search) search.value = page.link.query;
     /** @type {HTMLInputElement} */ (document.getElementById("only-changes")).checked = page.link.onlyChanges;
-    disclosure(document.getElementById("list-toggle"), open, open ? "Hide runs" : `All ${page.suite.runs.length} runs`);
-    if (!open) return;
 
     const table = document.getElementById("history-table");
     const tokens = searchTokens(page.link.query);
     const sort = page.link.sort;
     const sortLine = sort && page.view.lines.find((b) => b.slug === sort.line);
 
-    // The list follows the zoom window, so it always shows the runs the charts show.
+    // The list shows every run in range, or, when the reader asks, only those in the zoom window.
     const { first, last } = page.zoomWindow();
+    const zoomed = first > 0 || last < page.view.runs.length - 1;
+    const windowed = zoomed && page.link.inWindow;
+    renderWindowToggle(zoomed, first, last);
     const significant = (run) => {
       const counts = page.view.counts(run);
       return counts.worse + counts.better + counts.moved > 0;
     };
     let runs = page.view.runs
       .map((run, j) => ({ run, j }))
-      .filter(({ j }) => j >= first && j <= last)
+      .filter(({ j }) => !windowed || (j >= first && j <= last))
       .map((entry) => ({ ...entry, match: tokens.length ? searchRun(entry.run, tokens, page.link.query) : null }))
       .filter(({ match }) => !tokens.length || match)
       .filter(({ run }) => !page.link.onlyChanges || significant(run));
@@ -112,7 +134,7 @@ export function runsRegion(page) {
             h("span", { class: "sha" }, run.short),
             " ",
             page.regions.runBar.subjectElement(run, match?.marks),
-            h("span", { class: "row-meta" }, `${run.author}, ${formatDateTime(run.date)}`),
+            h("span", { class: "row-meta" }, `${run.author}, ${formatDateTime(run.date)}`, showInCharts(run, j, first, last)),
           ),
           ...cells,
         ),
@@ -128,6 +150,26 @@ export function runsRegion(page) {
     more.textContent = `Show ${Math.min(PAGE_SIZE, runs.length - shown)} more`;
   }
 
+  // The toggle that keeps the list to the zoom window, offered while the charts are zoomed.
+  function renderWindowToggle(zoomed, first, last) {
+    const label = document.getElementById("in-window-label");
+    label.hidden = !zoomed;
+    /** @type {HTMLInputElement} */ (document.getElementById("in-window")).checked = page.link.inWindow;
+    const runs = page.view.runs;
+    document.getElementById("in-window-range").textContent = zoomed ? `${runs[first].short} to ${runs[last].short}, ${last - first + 1} runs` : "";
+  }
+
+  // Opens the overview at a run, kept in the zoom window when it lies inside it.
+  function showInCharts(run, j, first, last) {
+    /** @type {import("../core/link.js").PlotWindow} */
+    const window = j >= first && j <= last ? page.link.window : { kind: "full" };
+    return page.anchor(
+      { type: "open", route: { kind: "overview" }, changes: { run: { kind: "at", key: run.key }, window } },
+      { class: "show-run" },
+      "Show in charts",
+    );
+  }
+
   function markHistorySelection() {
     const rows = /** @type {NodeListOf<HTMLElement>} */ (
       document.querySelectorAll("#changes .change-run[data-view-index], #history-table tbody tr[data-view-index]")
@@ -141,7 +183,6 @@ export function runsRegion(page) {
     const search = /** @type {HTMLInputElement} */ (document.getElementById("search"));
     search.value = page.link.query;
     // Searching waits for a short pause in typing, so a long history is not searched per keystroke.
-    let searchTimer = 0;
     search.addEventListener("input", () => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(
@@ -156,13 +197,24 @@ export function runsRegion(page) {
       shown += PAGE_SIZE;
       renderHistory();
     });
-    document.getElementById("list-toggle").addEventListener("click", () => page.dispatch({ type: "set", changes: { list: !page.link.list } }, renderHistory));
     document.getElementById("only-changes").addEventListener("change", (event) => {
       shown = PAGE_SIZE;
       page.dispatch({ type: "set", changes: { onlyChanges: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
     });
-    page.narrow.addEventListener("change", () => renderHistory());
+    document.getElementById("in-window").addEventListener("change", (event) => {
+      shown = PAGE_SIZE;
+      page.dispatch({ type: "set", changes: { inWindow: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
+    });
+    page.narrow.addEventListener("change", () => {
+      if (page.link.route.kind === "runs") renderHistory();
+    });
   }
 
-  return { render: renderHistory, markHistorySelection, wire };
+  // A new suite, section, or page shows the first runs, and drops a search still waiting to run.
+  function reset() {
+    shown = PAGE_SIZE;
+    clearTimeout(searchTimer);
+  }
+
+  return { roots: ["runs"], render, markHistorySelection, wire, reset };
 }

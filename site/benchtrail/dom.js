@@ -57,13 +57,6 @@ export function changeElement(ratio, kind) {
   return h("span", { class: `change ${kind}`, title: label }, arrow ? icon(arrow) : null, text);
 }
 
-// A button that opens or closes a part of the page: a chevron that points at what it reveals,
-// then its label.
-export function disclosure(button, open, label) {
-  button.setAttribute("aria-expanded", String(open));
-  button.replaceChildren(icon(open ? "down" : "right", "toggle-icon"), label);
-}
-
 export function lineKey(style) {
   return h("span", {
     class: style.dash === "solid" ? "line-key" : `line-key ${style.dash}`,

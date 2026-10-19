@@ -93,6 +93,7 @@
             </section>
           </div>
         </div>
+        <div id="page-head" class="page-head" hidden></div>
         <div id="suites" class="suites" role="tablist" aria-label="Benchmark suites" hidden></div>
         <div id="sections" class="sections" role="tablist" aria-label="Benchmark groups" hidden></div>
         <div id="controls" class="controls" hidden>
@@ -101,22 +102,26 @@
       </header>
 
       <main id="main" hidden>
-        <div class="overview">
+        <div id="trail-band" class="overview">
           <div id="trail-chart" class="trail-chart" role="img" aria-label="Regressions and improvements per run"></div>
           <section id="changes" class="changes" aria-label="Recent changes"></section>
         </div>
-        <div class="charts-area">
+        <div id="charts-area" class="charts-area">
           <div id="run-bar" class="run-bar" aria-live="polite"></div>
           <div id="layout" class="layout" role="radiogroup" aria-label="Show as" hidden></div>
           <section id="charts" class="charts" aria-label="Charts"></section>
         </div>
         <section id="selected" class="message" aria-label="Selected commit"></section>
-        <section class="runs">
-          <button type="button" id="list-toggle" class="wide-toggle" aria-expanded="false" aria-controls="history">All runs</button>
+        <section id="runs" class="runs" aria-label="Runs">
+          <div id="runs-link"></div>
           <div id="history" hidden>
             <div class="history-head">
               <input id="search" class="search" type="search" placeholder="Search runs" aria-label="Search runs by commit, message, or author" />
               <label id="only-changes-label" class="check"><input type="checkbox" id="only-changes" /> Only runs with a regression or improvement</label>
+              <label id="in-window-label" class="check" hidden
+                ><input type="checkbox" id="in-window" />
+                Only runs in the zoom window <span id="in-window-range" class="meta"></span></label
+              >
             </div>
             <div class="table-wrap">
               <table id="history-table" class="history-table"></table>

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildSuite, readSettings, suiteSettings } from "../site/benchtrail/core/history.js";
 import { formatLink, parseLink } from "../site/benchtrail/core/link.js";
-import { buildView, rankMovers, settle } from "../site/benchtrail/core/view.js";
+import { buildView, chartId, chartScope, rankMovers, settle } from "../site/benchtrail/core/view.js";
 
 /**
  * A typed entry as a custom github-action-benchmark tool records it.
@@ -104,4 +104,49 @@ test("settling a link leaves out what follows from the data", () => {
   assert.equal(settled(`?to=${DOCS[0].runs[5].key}`), `from=${DOCS[0].runs[0].key}&to=${DOCS[0].runs[5].key}`);
   // A color choice the pivot cannot honor is dropped.
   assert.equal(settled("?color=nope"), "");
+});
+
+// Two documents at two thread counts, where the documents color the lines and the thread counts
+// split the charts.
+const SPLIT = suites({
+  main: Array.from({ length: 4 }, () => ["a", "b"].flatMap((doc) => [1, 2].map((threads) => entry(`${doc}${threads}`, 100, { dimensions: { doc, threads } })))),
+  other: [[entry("x", 1, { dimensions: { os: "linux" } })]],
+});
+const COLORED = "color=doc&dash=~";
+
+test("a chart id names a chart by its metric and the values that split it, and reads back", () => {
+  const view = buildView(SPLIT, parseLink(`?${COLORED}`));
+  const line = view.lines[0];
+  assert.deepEqual(view.pivot.facet, ["threads"]);
+  assert.equal(chartId(line.metric, view.pivot.facet, line.dims), "time:threads=1");
+  // Escaped parts read back as written, and a part without a value matches no value.
+  const scope = chartScope({ ...parseLink(""), route: { kind: "chart", chart: "time%3Ax:doc=a%2Fb%3Dc/threads" } });
+  assert.deepEqual(scope, {
+    metric: "time:x",
+    dims: new Map([
+      ["doc", "a/b=c"],
+      ["threads", ""],
+    ]),
+  });
+});
+
+test("a chart page shows the lines of its chart alone, which no longer split by what it fixes", () => {
+  const view = buildView(SPLIT, parseLink(`?chart=time:threads=1&${COLORED}`));
+  assert.deepEqual(
+    view.lines.map((line) => line.label),
+    ["a / threads 1", "b / threads 1"],
+  );
+  assert.deepEqual(view.pivot.facet, []);
+  assert.deepEqual(view.chart?.dims, [{ key: "threads", label: "Threads", text: "1" }]);
+  // Its fixed values replace the filters for them, while other filters still apply.
+  assert.equal(buildView(SPLIT, parseLink(`?chart=time:threads=1&threads=2&doc=b&${COLORED}`)).lines.length, 1);
+  // A chart that names fewer splitting values than the data has now matches every chart they split.
+  assert.equal(new Set(buildView(SPLIT, parseLink(`?chart=time&${COLORED}`)).lines.map((line) => line.facet.token)).size, 2);
+  // A chart that names a dimension the section lacks matches nothing.
+  assert.equal(buildView(SPLIT, parseLink(`?chart=time:os=linux&${COLORED}`)).lines.length, 0);
+});
+
+test("a chart page names its suite and section, since its chart belongs to them", () => {
+  assert.equal(formatLink(settle(SPLIT, parseLink("?chart=time"))), "chart=time&suite=main&section=doc,threads");
+  assert.equal(formatLink(settle(SPLIT, parseLink("?page=runs&suite=main"))), "page=runs");
 });

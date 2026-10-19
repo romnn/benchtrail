@@ -1,12 +1,13 @@
 // The charts: one per metric, or small multiples when dimensions split them, each with a readout
 // of its lines; or, for many lines, the movers table that ranks them.
+// On the overview, each chart's title opens the chart's own page, which shows it alone and large.
 
 import { groupMagnitude, lineOption, markers } from "../core/chart-option.js";
 import { BASELINE_RUNS, relative } from "../core/detect.js";
 import { displayUnit, formatDate, formatValue } from "../core/format.js";
 import { urlText } from "../core/identity.js";
 import { only } from "../core/selection.js";
-import { judge, rankMovers } from "../core/view.js";
+import { chartId, judge, rankMovers } from "../core/view.js";
 import { changeElement, h, lineKey } from "../dom.js";
 
 // Past these, the readout under a chart and the grid of charts fold behind a "show all" toggle.
@@ -51,6 +52,7 @@ export function chartsRegion(page) {
     page.runtime.redrawn();
     const shared = page.plot();
     const faceted = page.view.pivot.facet.length > 0;
+    const charted = page.link.route.kind === "chart";
     renderLayoutSwitch();
     if (currentLayout() === "movers") {
       for (const chart of charts) page.runtime.unmount(chart);
@@ -75,7 +77,8 @@ export function chartsRegion(page) {
       if (cells.size) groups.push({ metric, cells: [...cells.values()] });
     }
     const total = groups.reduce((sum, group) => sum + group.cells.length, 0);
-    if (!page.link.allCharts && total > CHART_LIMIT) {
+    // A chart page shows every chart its link matches, which are few.
+    if (!charted && !page.link.allCharts && total > CHART_LIMIT) {
       let left = CHART_LIMIT;
       for (const group of groups) {
         group.cells = group.cells.slice(0, left);
@@ -103,7 +106,7 @@ export function chartsRegion(page) {
       return;
     }
     const allToggle =
-      total > CHART_LIMIT
+      !charted && total > CHART_LIMIT
         ? h(
             "button",
             {
@@ -143,12 +146,21 @@ export function chartsRegion(page) {
       chart.plotted = plotted;
       chart.log = log;
       chart.scale = scale;
-      chart.titleNode.textContent = chart.title;
+      renderTitle(chart, charted);
       chart.note.textContent = faceted ? "" : `${unitLabel}, ${directionText(chart.metric)}`;
       buildReadout(chart);
       chart.instance.setOption(option, { notMerge: true });
       chart.instance.resize();
     }
+  }
+
+  // On the overview a chart's title links to its page.
+  // On its own page the page head names a lone chart, so only its unit and direction remain.
+  function renderTitle(chart, charted) {
+    /** @type {import("../core/link.js").Route} */
+    const route = { kind: "chart", chart: chartId(chart.metric, page.view.pivot.facet, chart.benches[0].dims) };
+    chart.titleNode.replaceChildren(charted ? chart.title : page.anchor({ type: "open", route }, { class: "chart-link" }, chart.title));
+    chart.titleNode.hidden = charted && charts.length === 1;
   }
 
   // Each chart carries a readout under its plot: one row per line with its value and change at the
@@ -239,7 +251,9 @@ export function chartsRegion(page) {
     }
   }
 
+  // A chart page always shows its charts.
   function currentLayout() {
+    if (page.link.route.kind === "chart") return "charts";
     if (page.link.layout !== "auto") return page.link.layout;
     return page.view.lines.length > MOVERS_FROM ? "movers" : "charts";
   }
@@ -247,7 +261,7 @@ export function chartsRegion(page) {
   // The switch between charts and the movers table, shown once there are enough lines to need it.
   function renderLayoutSwitch() {
     const bar = document.getElementById("layout");
-    bar.hidden = page.view.lines.length <= 8;
+    bar.hidden = page.link.route.kind === "chart" || page.view.lines.length <= 8;
     if (bar.hidden) return;
     const current = currentLayout();
     bar.replaceChildren(
@@ -388,9 +402,16 @@ export function chartsRegion(page) {
     for (const chart of charts) chart.instance.setOption({ series: [{ id: chart.benches[0].key, markLine: marker }] });
   }
 
-  // A new section starts its movers table at the first page.
+  // A new suite, section, or page starts its movers table at the first page.
   function reset() {
     moversShown = MOVERS_PAGE;
+  }
+
+  // A page without charts releases them, with everything their instances hold.
+  function leave() {
+    for (const chart of charts) page.runtime.unmount(chart);
+    charts = [];
+    document.getElementById("charts").replaceChildren();
   }
 
   // Redraws the movers table alone, when it is the layout, as after the zoom window settles.
@@ -398,5 +419,5 @@ export function chartsRegion(page) {
     if (currentLayout() === "movers") renderMovers(document.getElementById("charts"));
   }
 
-  return { render: renderCharts, updateReadouts, refreshMovers, markSelection, reset };
+  return { roots: ["charts-area"], render: renderCharts, updateReadouts, refreshMovers, markSelection, reset, leave };
 }

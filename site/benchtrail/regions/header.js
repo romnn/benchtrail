@@ -26,6 +26,7 @@ export function headerRegion(page) {
   // is open.
   let menu = null;
   let settingsOpen = false;
+  let projectName = "Benchmarks";
 
   function renderMasthead() {
     const repo = safeUrl(page.data.repoUrl);
@@ -34,7 +35,16 @@ export function headerRegion(page) {
     const anchor = /** @type {HTMLAnchorElement} */ (document.getElementById("project-link"));
     anchor.textContent = name;
     if (repo) anchor.href = repo;
-    document.title = name;
+    projectName = name;
+  }
+
+  // The browser tab names the page before the project, so tabs of one project stay apart.
+  function renderTitle() {
+    const route = page.link.route;
+    const chart = page.view.chart;
+    const scope = chart?.dims.map((d) => `${d.label} ${d.text}`).join(", ");
+    const pageName = route.kind === "runs" ? "All runs" : route.kind === "chart" ? `${chart?.metric?.label ?? "Chart"}${scope ? ` (${scope})` : ""}` : null;
+    document.title = pageName ? `${pageName} – ${projectName}` : projectName;
   }
 
   function renderSummary() {
@@ -44,9 +54,11 @@ export function headerRegion(page) {
     document.getElementById("summary").textContent = `${count}, ${span}`;
   }
 
+  // A chart page shows one chart of one section, so it offers no other suites or sections.
   function renderSuites() {
+    const charted = page.link.route.kind === "chart";
     const nav = document.getElementById("suites");
-    nav.hidden = page.suites.length < 2;
+    nav.hidden = charted || page.suites.length < 2;
     nav.replaceChildren(
       ...page.suites.map((s) =>
         h(
@@ -67,7 +79,7 @@ export function headerRegion(page) {
     );
 
     const sections = document.getElementById("sections");
-    sections.hidden = page.suite.sections.length < 2;
+    sections.hidden = charted || page.suite.sections.length < 2;
     sections.replaceChildren(
       ...page.suite.sections.map((s) =>
         h(
@@ -99,7 +111,10 @@ export function headerRegion(page) {
 
     // Color and dash choices list the dimensions with few enough values to style apart, the same
     // ones the pivot accepts, plus none.
-    const varying = page.section.dims.filter((d) => d.varying);
+    // A chart page fixes its chart's metric and dimension values, so it offers no filters or
+    // choices for them.
+    const fixed = new Set(page.view.chart?.dims.map((d) => d.key));
+    const varying = page.section.dims.filter((d) => d.varying && !fixed.has(d.key));
     const colorDim = varying.find((d) => d.key === page.view.pivot.color);
     const choices = (dims) => [...dims.map((d) => ({ key: d.key, label: d.label })), { key: "", label: "None" }];
     const colorChoices = varying.filter(colorable);
@@ -118,7 +133,7 @@ export function headerRegion(page) {
     // filter collapses into a menu, so the header stays one or two lines however many dimensions
     // a suite has.
     const filters = [];
-    if (page.section.metrics.length > 1) {
+    if (page.section.metrics.length > 1 && !page.view.chart) {
       filters.push({
         key: "\u0000metric",
         label: "Metric",
@@ -129,7 +144,7 @@ export function headerRegion(page) {
         show: (selected) => page.dispatch({ type: "metrics", metrics: selected === "all" ? { kind: "all" } : only(selected) }),
       });
     }
-    for (const d of page.section.dims.filter((d) => d.values.length > 1)) {
+    for (const d of page.section.dims.filter((d) => d.values.length > 1 && !fixed.has(d.key))) {
       const legend = d.key === page.view.pivot.color || d.key === page.view.pivot.dash;
       const style = (value) => {
         if (d.key === page.view.pivot.color) return { slot: value.index % SLOTS, dash: !page.view.pivot.dash && value.index >= SLOTS ? "dashed" : "solid" };
@@ -395,17 +410,18 @@ export function headerRegion(page) {
     });
   }
 
-  // A new section closes its filter menu.
+  // A new suite, section, or page closes its filter menu.
   function reset() {
     menu = null;
   }
 
   // The tabs, filters, and summary follow the view; the masthead is drawn once, at boot.
   function render() {
+    renderTitle();
     renderSuites();
     renderFilters();
     renderSummary();
   }
 
-  return { render, renderMasthead, wireTheme, wire, reset };
+  return { roots: [], render, renderMasthead, wireTheme, wire, reset };
 }

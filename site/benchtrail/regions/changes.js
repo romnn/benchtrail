@@ -111,5 +111,5 @@ export function changesRegion(page) {
     container.replaceChildren(...[summary, h("ul", { class: "change-list" }, ...items), more].filter(Boolean));
   }
 
-  return { render: renderChanges, movesElement };
+  return { roots: ["trail-band"], render: renderChanges, movesElement };
 }

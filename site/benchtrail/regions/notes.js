@@ -33,5 +33,5 @@ export function notesRegion(page) {
     container.replaceChildren(...[button, list].filter(Boolean));
   }
 
-  return { render: renderNotes };
+  return { roots: ["notes"], render: renderNotes };
 }

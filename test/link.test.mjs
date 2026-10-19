@@ -12,7 +12,8 @@ const LINKS = [
   "data=../sample/edge-cases.js&suite=Typed+edge+cases&threads=s:4&smooth=5",
   "suite=Many+benchmarks&runs=100&metrics=cpu,peak+rss&document=oxide,okta&color=strategy&dash=~&values=change&x=date&from=70fba8d&to=16ad5ea&run=0728574~2&view=movers&more=1&charts=all&changes=all",
   "section=%23multi&metrics=~",
-  "section=s:%23odd,threads&list=1&q=walk+refs&only=changes&sort=time:threads%3D4&order=best",
+  "page=runs&section=s:%23odd,threads&q=walk+refs&only=changes&sort=time:threads%3D4&order=best&in=window",
+  "chart=time:doc%3Da/threads%3D4&suite=main&section=doc,threads&os=linux&from=70fba8d&to=16ad5ea",
   "d.smooth=yes&d.d.x=1&smooth=21",
   "mode=a%2Cb,c",
 ];
@@ -51,18 +52,37 @@ test("sections are named by their keys, or by their benchmark when they have non
   assert.deepEqual(parseLink("?section=s:%23odd,threads").section, { kind: "keys", keys: ["#odd", "threads"] });
 });
 
-test("the run list's search and sort only reach the link while the list is open", () => {
-  const closed = { ...emptyLink(), query: "walk", sort: /** @type {const} */ ({ line: "time:", order: "worst" }) };
-  assert.equal(formatLink(closed), "");
-  assert.equal(formatLink({ ...closed, list: true }), "list=1&q=walk&sort=time:");
+test("the run list's search, sort, and window only reach the link on the runs page", () => {
+  const elsewhere = { ...emptyLink(), query: "walk", sort: /** @type {const} */ ({ line: "time:", order: "worst" }), inWindow: true };
+  assert.equal(formatLink(elsewhere), "");
+  assert.equal(formatLink({ ...elsewhere, route: { kind: "runs" } }), "page=runs&q=walk&sort=time:&in=window");
+});
+
+test("a link opens the overview, the runs page, or one chart, named by the chart alone", () => {
+  assert.deepEqual(parseLink("").route, { kind: "overview" });
+  assert.deepEqual(parseLink("?page=runs").route, { kind: "runs" });
+  assert.deepEqual(parseLink("?page=nope").route, { kind: "overview" });
+  // A chart id keeps its escaped parts through the round trip, and a chart wins over a page name.
+  const chart = parseLink("?page=runs&chart=time:doc%3Da%252Fb/threads%3D4");
+  assert.deepEqual(chart.route, { kind: "chart", chart: "time:doc=a%2Fb/threads=4" });
+  assert.equal(formatLink(chart), "chart=time:doc%3Da%252Fb/threads%3D4");
+});
+
+test("opening a page keeps what the link shows, with any changes the page asks for", () => {
+  const zoomed = parseLink("?doc=a&from=a&to=b&values=change");
+  const opened = reduce(zoomed, { type: "open", route: { kind: "chart", chart: "time" }, changes: { run: { kind: "at", key: "c" } } });
+  assert.equal(formatLink(opened), "chart=time&doc=a&values=change&from=a&to=b&run=c");
+  assert.equal(formatLink(reduce(opened, { type: "open", route: { kind: "overview" } })), "doc=a&values=change&from=a&to=b&run=c");
 });
 
 test("switching suite or section starts the section's choices afresh", () => {
-  const busy = parseLink("?suite=A&metrics=cpu&threads=4&color=threads&run=abc&from=a&to=b&sort=time:&list=1&values=change");
+  const busy = parseLink("?page=runs&suite=A&metrics=cpu&threads=4&color=threads&run=abc&from=a&to=b&sort=time:&values=change");
   const next = reduce(busy, { type: "suite", suite: "B" });
-  // Choices about what to show reset; how to show it stays.
-  assert.equal(formatLink(next), "suite=B&values=change&list=1");
-  assert.equal(formatLink(reduce(busy, { type: "section", section: { kind: "keys", keys: ["os"] } })), "suite=A&section=os&values=change&list=1");
+  // Choices about what to show reset; how to show it, and the page, stay.
+  assert.equal(formatLink(next), "page=runs&suite=B&values=change");
+  assert.equal(formatLink(reduce(busy, { type: "section", section: { kind: "keys", keys: ["os"] } })), "page=runs&suite=A&section=os&values=change");
+  // A chart belongs to its section, so a chart page gives way to the overview.
+  assert.equal(formatLink(reduce(parseLink("?chart=time&suite=A"), { type: "suite", suite: "B" })), "suite=B");
 });
 
 test("a new range shows all of it", () => {

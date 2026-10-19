@@ -8,7 +8,7 @@
 // to a configured name pattern, or to their name as the only dimension.
 //
 // This module ties the page together: it loads the history, keeps the link the page shows, builds
-// the view from it, and draws the regions of the current page.
+// the view from it, and draws the regions of the page the link opens.
 
 import { createRuntime } from "./benchtrail/chart-runtime.js";
 import { yRange } from "./benchtrail/core/chart-option.js";
@@ -21,6 +21,7 @@ import { changesRegion } from "./benchtrail/regions/changes.js";
 import { chartsRegion } from "./benchtrail/regions/charts.js";
 import { headerRegion } from "./benchtrail/regions/header.js";
 import { notesRegion } from "./benchtrail/regions/notes.js";
+import { pageHeadRegion } from "./benchtrail/regions/page-head.js";
 import { runBarRegion } from "./benchtrail/regions/run-bar.js";
 import { runsRegion } from "./benchtrail/regions/runs.js";
 import { trailRegion } from "./benchtrail/regions/trail.js";
@@ -31,7 +32,8 @@ const config = readConfig();
 const narrow = matchMedia("(max-width: 720px)");
 
 // What the page shows, as its link says it.
-// It changes only through `dispatch`, which also writes it to the address bar.
+// It changes only through `dispatch` and `go`, which also write it to the address bar, and when
+// the reader moves through the browser's history.
 /** @type {import("./benchtrail/core/link.js").LinkState} */
 let link = parseLink(location.search);
 
@@ -66,6 +68,9 @@ const page = {
   config,
   narrow,
   dispatch,
+  go,
+  href,
+  anchor,
   render,
   selectRun,
   preview,
@@ -85,6 +90,7 @@ const page = {
 
 const regions = {
   header: headerRegion(page),
+  pageHead: pageHeadRegion(page),
   trail: trailRegion(page),
   changes: changesRegion(page),
   charts: chartsRegion(page),
@@ -94,9 +100,11 @@ const regions = {
 };
 page.regions = regions;
 
-// Each page lists the regions it shows, drawn in this order.
+// Each page lists the regions it shows, drawn in this order; the others are hidden.
 const PAGES = {
   overview: [regions.header, regions.changes, regions.trail, regions.charts, regions.runBar, regions.runs, regions.notes],
+  runs: [regions.header, regions.pageHead, regions.runs],
+  chart: [regions.header, regions.pageHead, regions.changes, regions.trail, regions.charts, regions.runBar],
 };
 
 async function boot() {
@@ -147,6 +155,17 @@ async function boot() {
 
   link = settle(suites, link);
   publish();
+  // Back and Forward restore a page's scroll position once it is drawn, which the browser cannot
+  // do itself, since every page is drawn in place.
+  history.scrollRestoration = "manual";
+  window.addEventListener(
+    "popstate",
+    safely((event) => {
+      enter(parseLink(location.search));
+      publish();
+      scrollTo(0, event.state?.scroll ?? 0);
+    }),
+  );
 
   // Canvas text keeps whatever font is ready when it draws, so wait briefly for the web font.
   await Promise.race([document.fonts?.ready, new Promise((resolve) => setTimeout(resolve, 1500))]);
@@ -231,17 +250,90 @@ function smoothing() {
 // address bar, and then draws what changed: the whole page unless the caller names less.
 // A new suite or section also starts every region's own state afresh.
 function dispatch(action, draw = render) {
-  if (action.type === "suite" || action.type === "section") for (const region of Object.values(regions)) region.reset?.();
+  if (action.type === "suite" || action.type === "section") resetRegions();
   link = settle(suites, reduce(link, action));
   publish();
   draw();
 }
 
+// Opens another page, as a navigation: the address bar gains an entry that Back returns from, and
+// the entry it leaves keeps its scroll position.
+function go(action) {
+  history.replaceState({ scroll: scrollY }, "");
+  enter(reduce(link, action));
+  history.pushState(null, "", url(link));
+  refreshAnchors();
+  scrollTo(0, 0);
+  // Focus moves to the new page's heading, so a keyboard or screen reader starts from it.
+  document.getElementById("page-title")?.focus({ preventScroll: true });
+}
+
+// Shows the page a link opens, with every region's own state and any pending work started afresh,
+// since that state belongs to the page being left.
+function enter(next) {
+  resetRegions();
+  clearTimeout(zoomTimer);
+  gesture = null;
+  link = settle(suites, next);
+  render();
+}
+
+function resetRegions() {
+  for (const region of Object.values(regions)) region.reset?.();
+}
+
 // Writes the link to the address bar, replacing the current entry, since changing what the page
 // shows is not a navigation.
 function publish() {
-  const query = formatLink(link);
-  history.replaceState(history.state, "", `${location.pathname}${query ? `?${query}` : ""}`);
+  history.replaceState(history.state, "", url(link));
+  refreshAnchors();
+}
+
+/** @param {import("./benchtrail/core/link.js").LinkState} target */
+function url(target) {
+  const query = formatLink(target);
+  return `${location.pathname}${query ? `?${query}` : ""}`;
+}
+
+// The address of the page an action opens from the current link.
+function href(action) {
+  return url(settle(suites, reduce(link, action)));
+}
+
+// Anchors to other pages, by the action each opens.
+// Their addresses follow the link as it changes, so a copied or newly opened link always carries
+// the page as it is now.
+const destinations = new WeakMap();
+
+// A link to another page: a real anchor, so it can be copied or opened in a new tab, which a plain
+// click opens in place.
+function anchor(action, attributes, ...children) {
+  const element = h(
+    "a",
+    {
+      ...attributes,
+      href: href(action),
+      "data-destination": "",
+      // The click is the anchor's alone, even one that opens a new tab, so a row around it does
+      // not also take it.
+      onclick: (event) => {
+        event.stopPropagation();
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        go(action);
+      },
+    },
+    ...children,
+  );
+  destinations.set(element, action);
+  return element;
+}
+
+function refreshAnchors() {
+  for (const element of /** @type {NodeListOf<HTMLAnchorElement>} */ (document.querySelectorAll("a[data-destination]"))) {
+    const action = destinations.get(element);
+    if (action) element.href = href(action);
+  }
 }
 
 // Rendering
@@ -259,12 +351,30 @@ function render() {
   rendering = true;
   try {
     computeView();
-    for (const region of PAGES.overview) region.render();
+    const shown = PAGES[link.route.kind];
+    arrange(shown);
+    for (const region of shown) region.render();
   } catch (error) {
     reportFailure(error);
   } finally {
     rendering = false;
   }
+}
+
+// Shows the parts of the page its regions draw into and hides the rest, and lets a region that is
+// not shown release what it holds.
+function arrange(shown) {
+  const visible = new Set(shown.flatMap((region) => region.roots));
+  for (const region of Object.values(regions)) {
+    for (const id of region.roots) document.getElementById(id).hidden = !visible.has(id);
+    if (!shown.includes(region)) region.leave?.();
+  }
+  document.getElementById("main").dataset.page = link.route.kind;
+}
+
+// Whether a region is part of the page the link opens.
+function onPage(region) {
+  return PAGES[link.route.kind].includes(region);
 }
 
 function queueRender() {
@@ -421,8 +531,7 @@ function zoomMoved(start, end) {
       const settled = gesture;
       dispatch({ type: "set", changes: { window: windowAt(settled, link.axis) } }, () => {
         settled.window = link.window;
-        regions.changes.render();
-        regions.runs.render();
+        for (const region of [regions.changes, regions.runs]) if (onPage(region)) region.render();
         // The movers table ranks lines over the window, so it follows the window once it settles.
         regions.charts.refreshMovers();
       });

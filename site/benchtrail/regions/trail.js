@@ -19,5 +19,5 @@ export function trailRegion(page) {
     trail?.setOption({ series: [{ id: "trail", markLine: markers(shared, { labels: true }) }] });
   }
 
-  return { render: renderTrail, markSelection };
+  return { roots: ["trail-band"], render: renderTrail, markSelection };
 }
