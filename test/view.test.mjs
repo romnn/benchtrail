@@ -150,3 +150,14 @@ test("a chart page names its suite and section, since its chart belongs to them"
   assert.equal(formatLink(settle(SPLIT, parseLink("?chart=time"))), "chart=time&suite=main&section=doc,threads");
   assert.equal(formatLink(settle(SPLIT, parseLink("?page=runs&suite=main"))), "page=runs");
 });
+
+test("a chart page whose suite or section is gone shows nothing and keeps its link", () => {
+  for (const query of ["?chart=time&suite=gone", "?chart=time&suite=main&section=gone"]) {
+    // Another suite or section with the same metric would chart something the link never named.
+    assert.equal(buildView(SPLIT, parseLink(query)).lines.length, 0);
+    assert.equal(buildView(SPLIT, parseLink(query)).chart?.metric, null);
+    assert.equal(formatLink(settle(SPLIT, parseLink(query))), query.slice(1));
+  }
+  // The overview falls back to the first suite instead.
+  assert.equal(formatLink(settle(SPLIT, parseLink("?suite=gone"))), "");
+});

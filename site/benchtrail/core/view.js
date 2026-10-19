@@ -123,11 +123,23 @@ export function rangeRuns(suite, rangeKey) {
 }
 
 /**
+ * The suite and section a link names, or the first ones in their place, and whether the link's
+ * own were found.
+ * The overview falls back to the first suite and section, while a chart page shows nothing in
+ * another's place, since its chart belongs to the ones it names.
+ * @typedef {{ suite: Suite, section: Section, found: boolean }} Target
+ */
+
+/**
  * @param {readonly Suite[]} suites
  * @param {LinkState} link
+ * @returns {Target}
  */
-export function findSuite(suites, link) {
-  return suites.find((s) => s.name === link.suite) ?? suites[0];
+function resolveTarget(suites, link) {
+  const named = link.suite === null ? suites[0] : suites.find((s) => s.name === link.suite);
+  const suite = named ?? suites[0];
+  const section = named ? findSection(suite, link.section) : null;
+  return { suite, section: section ?? suite.sections[0], found: section !== null };
 }
 
 // A link names a section by its dimension keys, which stay put as runs are added.
@@ -138,21 +150,21 @@ export function findSuite(suites, link) {
 /**
  * @param {Suite} suite
  * @param {SectionRef | null} wanted
- * @returns {Section}
+ * @returns {Section | null} null when no section matches
  */
-export function findSection(suite, wanted) {
+function findSection(suite, wanted) {
   if (!wanted) return suite.sections[0];
   if (wanted.kind === "benchmark") {
     return (
       suite.sections.find((candidate) => candidate.link === wanted.link) ??
       suite.sections.find((candidate) => candidate.histories.some((history) => benchmarkLink(history.benchmarkId) === wanted.link)) ??
-      suite.sections[0]
+      null
     );
   }
   const { keys } = wanted;
   const keyed = suite.sections.filter((candidate) => candidate.keys.length);
   const exact = keyed.find((candidate) => candidate.keys.length === keys.length && keys.every((key) => candidate.keys.includes(key)));
-  return exact ?? keyed.find((candidate) => keys.every((key) => candidate.keys.includes(key))) ?? suite.sections[0];
+  return exact ?? keyed.find((candidate) => keys.every((key) => candidate.keys.includes(key))) ?? null;
 }
 
 /** @param {string | null} benchmarkId */
@@ -228,6 +240,8 @@ export function smoothingWindow(suite, link) {
 // - the first suite and section stay implicit, and an unknown one falls back to the first;
 // - a chart page names its suite and section even when they come first, since its chart belongs
 //   to them and which suite or section comes first can change as more are recorded;
+// - a chart page whose suite or section the data lacks is left as it is, since it names nothing
+//   the data could settle it against;
 // - a dimension filter outside the section is dropped;
 // - a color or dash choice the pivot cannot honor is dropped;
 // - an explicit smoothing window equal to the suite's default follows the default;
@@ -239,10 +253,10 @@ export function smoothingWindow(suite, link) {
  * @returns {LinkState}
  */
 export function settle(suites, next) {
-  const suite = findSuite(suites, next);
-  const section = findSection(suite, next.section);
-  const settled = { ...next };
+  const { suite, section, found } = resolveTarget(suites, next);
   const explicit = next.route.kind === "chart";
+  if (explicit && !found) return next;
+  const settled = { ...next };
   settled.suite = !explicit && suite === suites[0] ? null : suite.name;
   settled.section = explicit || (suite.sections.length > 1 && section !== suite.sections[0]) ? sectionRef(section) : null;
 
@@ -422,8 +436,7 @@ function makeLine(trace, points, style, facet) {
  * @returns {View}
  */
 export function buildView(suites, link) {
-  const suite = findSuite(suites, link);
-  const section = findSection(suite, link.section);
+  const { suite, section, found } = resolveTarget(suites, link);
   const runs = rangeRuns(suite, link.range);
   const offset = suite.runs.length - runs.length;
   const pivot = choosePivot(section, link);
@@ -432,7 +445,7 @@ export function buildView(suites, link) {
   // and nothing at all when it names a dimension the section lacks.
   const scope = chartScope(link);
   const shows = (/** @type {Metric} */ metric) => (scope ? metric.slug === scope.metric : admits(link.metrics, metric.slug));
-  const known = !scope || [...scope.dims.keys()].every((key) => dimsByKey.has(key));
+  const known = !scope || (found && [...scope.dims.keys()].every((key) => dimsByKey.has(key)));
   const passes = (/** @type {Tags} */ dims) =>
     known &&
     section.dims.every((d) => {
@@ -497,7 +510,7 @@ export function buildView(suites, link) {
     lines,
     metrics,
     pivot,
-    chart: scope ? chartHeading(section, scope) : null,
+    chart: scope ? chartHeading(found ? section : null, scope) : null,
     selected,
     firstValues,
     boundaries,
@@ -507,17 +520,17 @@ export function buildView(suites, link) {
 }
 
 /**
- * @param {Section} section
+ * @param {Section | null} section null when the data lacks the chart's section
  * @param {ChartScope} scope
  * @returns {ChartHeading}
  */
 function chartHeading(section, scope) {
   const dims = [...scope.dims].map(([key, text]) => {
-    const d = section.dims.find((candidate) => candidate.key === key);
+    const d = section?.dims.find((candidate) => candidate.key === key);
     const value = d?.values.find((candidate) => candidate.param === text);
     return { key, label: d?.label ?? key, text: value ? (value.token === MISSING ? "none" : value.text) : text };
   });
-  return { metric: section.metrics.find((m) => m.slug === scope.metric) ?? null, dims };
+  return { metric: section?.metrics.find((m) => m.slug === scope.metric) ?? null, dims };
 }
 
 // Counts the judgements and collects the moves of every run at once, the first time anything
