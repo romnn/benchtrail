@@ -33,7 +33,7 @@ deploy:
     contents: read
     pages: write
     id-token: write
-  uses: romnn/benchtrail/.github/workflows/pages.yaml@v0.1.0
+  uses: romnn/benchtrail/.github/workflows/pages.yaml@v0.2.0
   with:
     path: dev/bench
     settings: |
@@ -58,13 +58,13 @@ Settings that break a rule fail the deploy before anything is published, and a d
 Pin an exact release: before 1.0, a minor release may change the settings.
 Dependabot or Renovate can keep the pin current.
 
-For any other site, such as one a documentation build assembles, the `romnn/benchtrail@v0.1.0`
+For any other site, such as one a documentation build assembles, the `romnn/benchtrail@v0.2.0`
 action installs the dashboard into a directory and leaves publishing to the workflow.
 It takes the same `path` and `settings`; the dashboard's files are replaced there, and the history
 and any other file stay.
 
 ```yaml
-- uses: romnn/benchtrail@v0.1.0
+- uses: romnn/benchtrail@v0.2.0
   with:
     path: site/static/bench
     settings: |

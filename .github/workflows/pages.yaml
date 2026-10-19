@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       # A called workflow cannot name the release it was called at, so it pins its own release, which
       # the release bump keeps in step.
-      - uses: romnn/benchtrail@v0.1.0
+      - uses: romnn/benchtrail@v0.2.0
         with:
           path: ${{ inputs.path }}
           settings: ${{ inputs.settings }}
