@@ -693,9 +693,11 @@ function theme() {
   };
 }
 
+// Problems in the settings show too, since they may be why the page has nothing to draw, such as
+// a history the settings meant to name elsewhere.
 function showProblem(title, message) {
   const box = document.getElementById("problem");
-  box.replaceChildren(h("h2", {}, title), h("p", {}, message));
+  box.replaceChildren(h("h2", {}, title), h("p", {}, message), ...config.problems.map((problem) => h("p", {}, problem.message)));
   box.hidden = false;
   document.getElementById("summary").textContent = "";
 }
