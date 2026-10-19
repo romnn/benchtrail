@@ -121,11 +121,7 @@ tasks:
     cmds:
       - task: package
         vars: { REF: "{{.TAG}}" }
-      - rm -rf dist/site && mkdir -p dist/site
-      - git archive --format=tar "{{.TAG}}:site" | tar -x -C dist/site
-      - >-
-        gh release create "{{.TAG}}" --verify-tag --generate-notes --title "{{.TAG}}"
-        dist/benchtrail.zip dist/site/index.html dist/site/benchtrail.js dist/site/benchtrail.css
+      - gh release create "{{.TAG}}" --verify-tag --generate-notes --title "{{.TAG}}" dist/benchtrail.zip
 
   outdated:
     desc: "list outdated deps (incl. new majors): adoptable now vs still in cooldown"

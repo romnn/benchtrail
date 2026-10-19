@@ -6,5 +6,7 @@
     "lib": ["es2024"],
     "types": ["node"]
   },
-  "include": ["sample/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs"]
+  // The page's browser-free modules are checked here too, without DOM types, so the tests can
+  // import them and they can never reach for the browser.
+  "include": ["sample/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "site/benchtrail/format.js"]
 }

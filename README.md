@@ -11,7 +11,7 @@ project's GitHub Pages branch.
 It reads the action's `data.js` as is, splits each benchmark into named dimensions and metrics, and
 marks the runs where a value regressed or improved.
 
-The page needs no build step and no server code: three files and the history sit side by side.
+The page needs no build step and no server code: its files and the history sit side by side.
 ECharts loads from jsDelivr.
 
 ## Use it
@@ -27,9 +27,10 @@ unzip -o /tmp/benchtrail.zip -d dev/bench
 git add dev/bench && git commit -m "Add the benchtrail dashboard" && git push
 ```
 
-The archive holds `index.html`, `benchtrail.js` and `benchtrail.css`.
-To upgrade later, replace all three files, since a release may change the page's markup and its
-pinned ECharts build, then copy your settings block from the old `index.html` into the new one.
+The archive holds `index.html`, `benchtrail.css`, `benchtrail.js`, and the `benchtrail/` directory
+of modules it loads.
+To upgrade later, replace all of them, since a release may change the page's markup and its pinned
+ECharts build, then copy your settings block from the old `index.html` into the new one.
 
 ### Settings
 
@@ -150,5 +151,5 @@ checks and scripts below.
 ### Releasing
 
 `bumpversion minor` (or `patch`, `major`) commits the version and creates a `v*` tag.
-Pushing the tag runs the tests and the lint, and publishes a GitHub release with `benchtrail.zip` and the three
-site files, taken from the tag.
+Pushing the tag runs the tests and the lint, and publishes a GitHub release with `benchtrail.zip`,
+which packs `site/` as committed at the tag.

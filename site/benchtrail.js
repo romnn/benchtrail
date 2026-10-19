@@ -1,11 +1,14 @@
 // benchtrail renders a github-action-benchmark history (`window.BENCHMARK_DATA`) as a dashboard.
-// It needs no build step: ECharts comes from the CDN script tag in index.html, and everything else
-// is in this module.
+// It needs no build step: ECharts comes from the CDN script tag in index.html, and the page's own
+// modules load from the `benchtrail/` directory beside this one.
 //
 // Each recorded entry becomes an observation: a set of named dimensions, a metric, a value, and the
 // environment it ran in.
 // Typed entries carry these in `extra` as JSON under a `benchtrail` key; untyped entries fall back
 // to a configured name pattern, or to their name as the only dimension.
+
+import { changeElement, h, icon, safeUrl } from "./benchtrail/dom.js";
+import { displayUnit, FAMILY_LABELS, formatDate, formatDateTime, formatTick, formatValue, parseUnit, timeFormat, unitFactor } from "./benchtrail/format.js";
 
 const echarts = window.echarts;
 const PAGE_SIZE = 30;
@@ -61,35 +64,6 @@ const AXES = [
   { key: "run", label: "By run" },
   { key: "date", label: "By date" },
 ];
-
-// Unit families, smallest step first, as [label, size in the family's base unit].
-/** @type {Record<string, Array<[string, number]>>} */
-const FAMILIES = {
-  time: [
-    ["ns", 1e-9],
-    ["µs", 1e-6],
-    ["ms", 1e-3],
-    ["s", 1],
-    ["min", 60],
-    ["h", 3600],
-  ],
-  iec: [
-    ["B", 1],
-    ["KiB", 2 ** 10],
-    ["MiB", 2 ** 20],
-    ["GiB", 2 ** 30],
-    ["TiB", 2 ** 40],
-  ],
-  si: [
-    ["B", 1],
-    ["kB", 1e3],
-    ["MB", 1e6],
-    ["GB", 1e9],
-    ["TB", 1e12],
-  ],
-};
-const UNIT_ALIASES = { us: "µs", μs: "µs", sec: "s", secs: "s", seconds: "s", bytes: "B", byte: "B", KB: "kB", kb: "kB" };
-const FAMILY_LABELS = { time: "Time", iec: "Size", si: "Size" };
 
 // Settings a config may give for every suite at its top level, or for one suite under `suites`.
 const SETTING_KEYS = ["names", "label", "metrics", "dimensions", "colorBy", "dashBy", "ignoreEnvironment", "smoothing"];
@@ -3555,131 +3529,6 @@ function zoomedRuns() {
   return { from: runAtPercent(state.zoom.start), to: runAtPercent(state.zoom.end) };
 }
 
-// Formatting
-
-function parseUnit(unit) {
-  const match = /^\s*([^\s/]+)\s*(.*)$/.exec(unit ?? "");
-  if (!match) return null;
-  const head = UNIT_ALIASES[match[1]] ?? match[1];
-  for (const [family, steps] of Object.entries(FAMILIES)) {
-    const step = steps.find(([label]) => label === head);
-    if (step) return { family, size: step[1], tail: match[2] };
-  }
-  return null;
-}
-
-// The factor that converts a value recorded in `from` into `to`; units outside a known family
-// only ever meet themselves, since metrics are keyed by unit family.
-function unitFactor(from, to) {
-  if (from === to) return 1;
-  const a = parseUnit(from);
-  const b = parseUnit(to);
-  return a && b && a.family === b.family ? a.size / b.size : 1;
-}
-
-// Picks the step that keeps `magnitude` at one or more, and returns the factor that converts a
-// recorded value into it.
-// Times stay in seconds up to ten minutes, which reads better than 2.3 min.
-function displayUnit(unit, magnitude) {
-  const parsed = parseUnit(unit);
-  if (!parsed || !(magnitude > 0)) return { label: unit, factor: 1 };
-  const base = magnitude * parsed.size;
-  let chosen = FAMILIES[parsed.family][0];
-  for (const step of FAMILIES[parsed.family]) {
-    const floor = parsed.family === "time" && step[1] > 1 ? step[1] * 10 : step[1];
-    if (base >= floor) chosen = step;
-  }
-  return { label: chosen[0] + parsed.tail, factor: parsed.size / chosen[1] };
-}
-
-function formatValue(value, unit) {
-  const display = displayUnit(unit, Math.abs(value));
-  const text = formatNumber(value * display.factor);
-  return display.label ? `${text} ${display.label}` : text;
-}
-
-function formatNumber(x) {
-  const abs = Math.abs(x);
-  const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : abs >= 1 ? 2 : 3;
-  return x.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-}
-
-// A tick label with as many decimals as the tick step needs, so neighbouring ticks never read the
-// same; without a step, as on a log axis, it keeps three significant digits.
-function formatTick(x, step = null) {
-  if (step > 0) {
-    const digits = Math.min(10, Math.max(0, -Math.floor(Math.log10(step) + 1e-9)));
-    return x.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-  }
-  return x.toLocaleString(undefined, { maximumSignificantDigits: 3 });
-}
-
-function formatSigned(x) {
-  const rounded = Math.abs(x) < 0.05 ? 0 : x;
-  const sign = rounded > 0 ? "+" : rounded < 0 ? "−" : "±";
-  return `${sign}${Math.abs(rounded).toFixed(Math.abs(rounded) >= 10 ? 0 : 1)}`;
-}
-
-function changeParts(ratio, kind) {
-  if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) return { text: "–", arrow: null, label: "no earlier value" };
-  const arrow = ["worse", "better", "moved"].includes(kind) ? (ratio > 0 ? "up" : "down") : null;
-  const label =
-    { worse: "regression", better: "improvement", moved: "shift of unknown direction", unjudged: "too few earlier runs to judge" }[kind] ?? "within noise";
-  return { text: `${formatSigned(ratio * 100)}%`, arrow, label };
-}
-
-// A significant change leads with an arrow in its direction, so color is never its only cue.
-function changeElement(ratio, kind) {
-  const { text, arrow, label } = changeParts(ratio, kind);
-  return h("span", { class: `change ${kind}`, title: label }, arrow ? icon(arrow) : null, text);
-}
-
-// Thin stroked chevrons, drawn rather than typed, so every arrow on the page has one weight and
-// sits on the text's baseline in every font.
-const ICONS = {
-  up: "M4 10l4-4 4 4",
-  down: "M4 6l4 4 4-4",
-  left: "M10 3.5 5.5 8l4.5 4.5",
-  right: "M6 3.5 10.5 8 6 12.5",
-};
-
-// A gear of eight teeth around a hub, generated so its geometry stays exact at any size.
-ICONS.gear = (() => {
-  const teeth = 8;
-  const points = [];
-  for (let i = 0; i < teeth * 4; i += 1) {
-    const angle = (i / (teeth * 4)) * Math.PI * 2 - Math.PI / 2;
-    const radius = i % 4 < 2 ? 6.6 : 5.1;
-    points.push(`${(8 + radius * Math.cos(angle)).toFixed(2)} ${(8 + radius * Math.sin(angle)).toFixed(2)}`);
-  }
-  return `M${points.join("L")}ZM8 5.8a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 1 0 0-4.4`;
-})();
-
-function icon(name, extraClass = "") {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("class", `icon ${extraClass}`.trim());
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", ICONS[name]);
-  svg.append(path);
-  return svg;
-}
-
-const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
-const dateYearFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
-const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
-const dateTimeFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-
-function formatDate(ms, withYear = false) {
-  if (!ms || !Number.isFinite(ms)) return "";
-  return (withYear ? dateYearFormat : dateFormat).format(ms);
-}
-
-function formatDateTime(ms) {
-  return ms && Number.isFinite(ms) ? dateTimeFormat.format(ms) : "";
-}
-
 // Helpers
 
 function theme() {
@@ -3700,31 +3549,6 @@ function theme() {
     font: get("font"),
     series: Array.from({ length: SLOTS }, (_, i) => get(`s${i + 1}`)),
   };
-}
-
-// Builds an element; text children become text nodes, so data never reaches the DOM as markup.
-function h(tag, attrs = {}, ...children) {
-  const element = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === null || value === undefined || value === false) continue;
-    if (key.startsWith("on")) element.addEventListener(key.slice(2), value);
-    else if (value === true) element.setAttribute(key, "");
-    else element.setAttribute(key, value);
-  }
-  for (const child of children) {
-    if (child === null || child === undefined) continue;
-    element.append(child instanceof Node ? child : document.createTextNode(String(child)));
-  }
-  return element;
-}
-
-function safeUrl(url) {
-  try {
-    const parsed = new URL(String(url));
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
-  } catch {
-    return null;
-  }
 }
 
 function withAlpha(color, alpha) {
