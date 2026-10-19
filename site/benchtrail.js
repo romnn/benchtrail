@@ -157,10 +157,22 @@ async function boot() {
   publish();
   // Back and Forward restore a page's scroll position once it is drawn, which the browser cannot
   // do itself, since every page is drawn in place.
+  // Each history entry keeps its position as the reader scrolls, written after a pause, since
+  // browsers limit how often an entry can be replaced.
   history.scrollRestoration = "manual";
+  window.addEventListener(
+    "scroll",
+    () => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(rememberScroll, 150);
+    },
+    { passive: true },
+  );
   window.addEventListener(
     "popstate",
     safely((event) => {
+      // A position still waiting to be written belongs to the entry just left.
+      clearTimeout(scrollTimer);
       enter(parseLink(location.search));
       publish();
       scrollTo(0, event.state?.scroll ?? 0);
@@ -249,23 +261,29 @@ function smoothing() {
 // Applies the reader's action to the link, settles the result against the data, writes it to the
 // address bar, and then draws what changed: the whole page unless the caller names less.
 // A new suite or section also starts every region's own state afresh.
+// A zoom gesture still waiting for its pause is committed first, so the action applies to the
+// window the reader sees; the page is then drawn whole, since the window changed too.
 function dispatch(action, draw = render) {
+  const redraw = commitGesture() ? render : draw;
   if (action.type === "suite" || action.type === "section") resetRegions();
   link = settle(suites, reduce(link, action));
   publish();
-  draw();
+  redraw();
 }
 
 // Opens another page, as a navigation: the address bar gains an entry that Back returns from, and
 // the entry it leaves keeps its scroll position.
 function go(action) {
-  history.replaceState({ scroll: scrollY }, "");
+  commitGesture();
+  clearTimeout(scrollTimer);
+  rememberScroll();
   enter(reduce(link, action));
   history.pushState(null, "", url(link));
   refreshAnchors();
   scrollTo(0, 0);
-  // Focus moves to the new page's heading, so a keyboard or screen reader starts from it.
-  document.getElementById("page-title")?.focus({ preventScroll: true });
+  // Focus moves to the new page's heading, or to the project's name on the overview, so a
+  // keyboard or screen reader starts from it.
+  document.getElementById(link.route.kind === "overview" ? "project-link" : "page-title")?.focus({ preventScroll: true });
 }
 
 // Shows the page a link opens, with every region's own state and any pending work started afresh,
@@ -273,9 +291,16 @@ function go(action) {
 function enter(next) {
   resetRegions();
   clearTimeout(zoomTimer);
+  zoomTimer = 0;
   gesture = null;
   link = settle(suites, next);
   render();
+}
+
+let scrollTimer = 0;
+
+function rememberScroll() {
+  history.replaceState({ ...history.state, scroll: scrollY }, "");
 }
 
 function resetRegions() {
@@ -456,7 +481,7 @@ function preview(index) {
 }
 
 function showDetails(index) {
-  if (index === hovered) return;
+  if (index === hovered || !onPage(regions.runBar)) return;
   hovered = index;
   cancelAnimationFrame(hoverFrame);
   hoverFrame = requestAnimationFrame(regions.runBar.renderSelected);
@@ -473,9 +498,9 @@ function selectRun(index, pin = true) {
   dispatch({ type: "set", changes: { run } }, () => {
     view.selected = clamped;
     const shared = plot();
-    regions.trail.markSelection(shared);
-    regions.charts.markSelection(shared);
-    regions.runBar.render();
+    if (onPage(regions.trail)) regions.trail.markSelection(shared);
+    if (onPage(regions.charts)) regions.charts.markSelection(shared);
+    if (onPage(regions.runBar)) regions.runBar.render();
     regions.runs.markHistorySelection();
   });
 }
@@ -518,6 +543,7 @@ function runAtPercent(percent, axis = link.axis) {
 
 // The zoom window as a gesture left it, in percent of the x axis, while the link still holds the
 // window it was committed as; see `zoom`.
+// The timer is 0 while no gesture waits to be committed.
 let gesture = null;
 let zoomTimer = 0;
 
@@ -528,8 +554,9 @@ function zoomMoved(start, end) {
   clearTimeout(zoomTimer);
   zoomTimer = setTimeout(
     safely(() => {
+      zoomTimer = 0;
       const settled = gesture;
-      dispatch({ type: "set", changes: { window: windowAt(settled, link.axis) } }, () => {
+      dispatch({ type: "set", changes: { window: windowAt(settled, settled.axis) } }, () => {
         settled.window = link.window;
         for (const region of [regions.changes, regions.runs]) if (onPage(region)) region.render();
         // The movers table ranks lines over the window, so it follows the window once it settles.
@@ -538,6 +565,17 @@ function zoomMoved(start, end) {
     }),
     250,
   );
+}
+
+// Commits a gesture still waiting for its pause, as the runs at its ends on the axis it was made
+// on, and says whether there was one.
+function commitGesture() {
+  if (!zoomTimer) return false;
+  clearTimeout(zoomTimer);
+  zoomTimer = 0;
+  link = settle(suites, reduce(link, { type: "set", changes: { window: windowAt(gesture, gesture.axis) } }));
+  gesture.window = link.window;
+  return true;
 }
 
 // The zoom window in percent of the x axis: as a gesture left it, until the link's window or axis
