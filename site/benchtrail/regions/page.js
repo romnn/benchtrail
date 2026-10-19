@@ -39,14 +39,16 @@
  */
 
 /**
- * A region as the page draws it.
- * @typedef {object} Region
+ * A region as the page draws it; one that restores its state also saves it.
+ * @typedef {RegionBase & ({ snapshot: () => unknown, restore: (saved: unknown) => void } | { snapshot?: never, restore?: never })} Region
+ */
+
+/**
+ * @typedef {object} RegionBase
  * @property {readonly string[]} roots
  * @property {() => void} render
  * @property {() => void} [reset]
  * @property {() => void} [leave]
- * @property {() => unknown} [snapshot]
- * @property {(saved: unknown) => void} [restore]
  */
 
 export {};

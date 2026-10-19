@@ -72,7 +72,7 @@ const page = {
   go,
   href,
   anchor,
-  saveEntry: () => persistEntry(),
+  saveEntry: () => writeEntry(),
   render,
   selectRun,
   preview,
@@ -101,12 +101,18 @@ const regions = {
 };
 
 // Each page lists the regions it shows, drawn in this order; the others are hidden.
-/** @satisfies {Record<import("./benchtrail/core/link.js").Route["kind"], readonly import("./benchtrail/regions/page.js").Region[]>} */
+// Pages name their regions, so a page can only show a region the page holds and arranges.
+/** @satisfies {Record<import("./benchtrail/core/link.js").Route["kind"], readonly (keyof typeof regions)[]>} */
 const PAGES = {
-  overview: [regions.header, regions.changes, regions.trail, regions.charts, regions.runBar, regions.runs, regions.notes],
-  runs: [regions.header, regions.pageHead, regions.runs],
-  chart: [regions.header, regions.pageHead, regions.changes, regions.trail, regions.charts, regions.runBar],
+  overview: ["header", "changes", "trail", "charts", "runBar", "runs", "notes"],
+  runs: ["header", "pageHead", "runs"],
+  chart: ["header", "pageHead", "changes", "trail", "charts", "runBar"],
 };
+
+// The regions of the page the link opens, in drawing order.
+function shownRegions() {
+  return PAGES[link.route.kind].map((name) => regions[name]);
+}
 
 async function boot() {
   window.addEventListener("error", (event) => reportFailure(event.error ?? event.message));
@@ -154,39 +160,6 @@ async function boot() {
   }
   for (const s of suites) for (const problem of s.problems.keys()) console.warn(`benchtrail: ${s.name}: ${problem}`);
 
-  link = settle(suites, link);
-  // A reload keeps the entry's state, which says how the page was left.
-  const saved = history.state ?? {};
-  entryId = saved.id ?? nextEntryId();
-  entries.set(entryId, { scroll: saved.scroll, regions: saved.regions });
-  history.replaceState({ ...saved, id: entryId }, "", url(link));
-  // Back and Forward restore a page as it was left once it is drawn, which the browser cannot do
-  // itself, since every page is drawn in place.
-  history.scrollRestoration = "manual";
-  window.addEventListener(
-    "scroll",
-    () => {
-      remember({ scroll: scrollY });
-      clearTimeout(scrollTimer);
-      scrollTimer = setTimeout(persistEntry, 150);
-    },
-    { passive: true },
-  );
-  window.addEventListener(
-    "popstate",
-    safely((event) => {
-      // The entry just left can no longer be written, so it is remembered in memory alone.
-      clearTimeout(scrollTimer);
-      remember({ scroll: scrollY, regions: snapshot() });
-      entryId = event.state?.id ?? nextEntryId();
-      const saved = entries.get(entryId) ?? event.state ?? {};
-      enter(parseLink(location.search), saved.regions);
-      history.replaceState({ ...history.state, id: entryId }, "", url(link));
-      refreshAnchors();
-      scrollTo(0, saved.scroll ?? 0);
-    }),
-  );
-
   // Canvas text keeps whatever font is ready when it draws, so wait briefly for the web font.
   await Promise.race([document.fonts?.ready, new Promise((resolve) => setTimeout(resolve, 1500))]);
 
@@ -194,9 +167,7 @@ async function boot() {
   document.getElementById("main").hidden = false;
   document.getElementById("controls").hidden = false;
   wireControls();
-  restoreRegions(saved.regions);
-  render();
-  if (saved.scroll) scrollTo(0, saved.scroll);
+  startHistory();
 }
 
 // Configuration and loading
@@ -277,21 +248,22 @@ function dispatch(action, draw = render) {
   const redraw = commitGesture() ? render : draw;
   if (action.type === "suite" || action.type === "section") startAfresh();
   link = settle(suites, reduce(link, action));
-  publish();
+  writeEntry();
   redraw();
 }
 
 // Opens another page, as a navigation: the address bar gains an entry that Back returns from, and
 // the entry it leaves keeps the page as it was left, including a zoom gesture made just before.
+/** @param {import("./benchtrail/core/selection.js").Navigation} action */
 function go(action) {
-  if (commitGesture()) publish();
+  commitGesture();
   clearTimeout(scrollTimer);
-  remember({ scroll: scrollY, regions: snapshot() });
-  persistEntry();
+  remember({ scroll: scrollY });
+  writeEntry();
   enter(reduce(link, action));
   entryId = nextEntryId();
   history.pushState({ id: entryId }, "", url(link));
-  refreshAnchors();
+  writeEntry();
   scrollTo(0, 0);
   // Focus moves to the new page's heading, or to the project's name on the overview, so a
   // keyboard or screen reader starts from it.
@@ -314,15 +286,55 @@ function enter(next, saved = undefined) {
 //
 // Each entry carries an id in its state, under which the page remembers how the entry was left:
 // its scroll position, and what its regions had expanded, such as how many runs the list shows.
-// The record changes in memory at once, and is written to the entry after a pause, since browsers
-// limit how often an entry can be replaced; the written copy outlasts a reload.
+// The record changes in memory at once and is written to the entry with every change to the link,
+// and after a pause in scrolling, since browsers limit how often an entry can be replaced.
+// The written copy outlasts a reload.
 
 /** @type {Map<string, { scroll?: number, regions?: Record<string, unknown> }>} */
 const entries = new Map();
-const pageLoad = Date.now().toString(36);
+// Ids from earlier loads of the page stay in their entries, so each load draws its own prefix.
+const pageLoad = Array.from(crypto.getRandomValues(new Uint32Array(2)), (n) => n.toString(36)).join("");
 let entryCount = 0;
 let entryId = "";
 let scrollTimer = 0;
+
+// Shows the entry the browser is on, once the history is loaded, and follows Back and Forward
+// from then on.
+// An entry the browser moved to while the page loaded is the one shown, since the page reads the
+// entry only now.
+function startHistory() {
+  // The browser cannot restore a scroll position itself, since every page is drawn in place.
+  history.scrollRestoration = "manual";
+  window.addEventListener(
+    "scroll",
+    () => {
+      remember({ scroll: scrollY });
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(writeEntry, 150);
+    },
+    { passive: true },
+  );
+  window.addEventListener(
+    "popstate",
+    safely((event) => {
+      // The entry just left can no longer be written, so it is remembered in memory alone.
+      clearTimeout(scrollTimer);
+      remember({ scroll: scrollY, regions: snapshot() });
+      activate(event.state);
+    }),
+  );
+  activate(history.state);
+}
+
+// Shows the entry the browser is on as it was left: its link, what its regions had expanded, and
+// its scroll position.
+function activate(state) {
+  entryId = state?.id ?? nextEntryId();
+  const saved = entries.get(entryId) ?? state ?? {};
+  enter(parseLink(location.search), saved.regions);
+  writeEntry();
+  scrollTo(0, saved.scroll ?? 0);
+}
 
 function nextEntryId() {
   entryCount += 1;
@@ -333,11 +345,13 @@ function remember(record) {
   entries.set(entryId, { ...entries.get(entryId), ...record });
 }
 
-// Writes the entry's record, with its regions as they are now, since a region that expanded may
-// not have scrolled since.
-function persistEntry() {
+// Writes the link and the entry's record to the current entry, with its regions as they are now,
+// so a list that grew or started over is saved along with the link.
+// It replaces the entry, since changing what the page shows is not a navigation.
+function writeEntry() {
   remember({ regions: snapshot() });
-  history.replaceState({ ...history.state, ...entries.get(entryId), id: entryId }, "");
+  history.replaceState({ ...history.state, ...entries.get(entryId), id: entryId }, "", url(link));
+  refreshAnchors();
 }
 
 /** @param {Record<string, unknown> | undefined} saved */
@@ -355,13 +369,6 @@ function startAfresh() {
   for (const region of Object.values(regions)) region.reset?.();
 }
 
-// Writes the link to the address bar, replacing the current entry, since changing what the page
-// shows is not a navigation.
-function publish() {
-  history.replaceState(history.state, "", url(link));
-  refreshAnchors();
-}
-
 /** @param {import("./benchtrail/core/link.js").LinkState} target */
 function url(target) {
   const query = formatLink(target);
@@ -369,6 +376,7 @@ function url(target) {
 }
 
 // The address of the page an action opens from the current link.
+/** @param {import("./benchtrail/core/selection.js").Navigation} action */
 function href(action) {
   return url(settle(suites, reduce(link, action)));
 }
@@ -380,6 +388,11 @@ const destinations = new WeakMap();
 
 // A link to another page: a real anchor, so it can be copied or opened in a new tab, which a plain
 // click opens in place.
+/**
+ * @param {import("./benchtrail/core/selection.js").Navigation} action
+ * @param {Record<string, unknown>} attributes
+ * @param {...(Node | string | null)} children
+ */
 function anchor(action, attributes, ...children) {
   const element = h(
     "a",
@@ -424,7 +437,7 @@ function render() {
   rendering = true;
   try {
     computeView();
-    const shown = PAGES[link.route.kind];
+    const shown = shownRegions();
     arrange(shown);
     for (const region of shown) region.render();
   } catch (error) {
@@ -450,7 +463,7 @@ function arrange(shown) {
 
 // Whether a region is part of the page the link opens.
 function onPage(region) {
-  return PAGES[link.route.kind].includes(region);
+  return shownRegions().includes(region);
 }
 
 function queueRender() {

@@ -17,6 +17,9 @@ export function runsRegion(page) {
   // How many runs the list shows, and the search waiting for a pause in typing.
   let shown = PAGE_SIZE;
   let searchTimer = 0;
+  // Whether the search field shows the link's search even while it has focus, as after the reader
+  // moved to another page, where what was typed no longer applies.
+  let fresh = true;
 
   function render() {
     const listed = page.link.route.kind === "runs";
@@ -42,7 +45,8 @@ export function runsRegion(page) {
     if (route.kind !== "runs") return;
     const list = route.list;
     const search = /** @type {HTMLInputElement} */ (document.getElementById("search"));
-    if (search.value !== list.query && document.activeElement !== search) search.value = list.query;
+    if (search.value !== list.query && (fresh || document.activeElement !== search)) search.value = list.query;
+    fresh = false;
     /** @type {HTMLInputElement} */ (document.getElementById("only-changes")).checked = list.onlyChanges;
 
     const table = document.getElementById("history-table");
@@ -219,6 +223,7 @@ export function runsRegion(page) {
   function reset() {
     shown = PAGE_SIZE;
     clearTimeout(searchTimer);
+    fresh = true;
   }
 
   // A history entry keeps how many runs its list showed, so its scroll position finds them again.
