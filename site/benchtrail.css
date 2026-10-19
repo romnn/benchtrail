@@ -492,6 +492,12 @@ button {
   font-size: 13px;
 }
 
+/* Clears a filtered legend row; quieter than the values it sits beside. */
+.chips-all {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .menu-item {
   display: flex;
   align-items: center;

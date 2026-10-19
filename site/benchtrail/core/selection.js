@@ -86,13 +86,12 @@ function unreachable(value) {
 }
 
 /**
- * The filter for a set of selected values, out of every value there is now.
- * A selection of every current value reads as all values, including ones that appear later.
+ * The filter that shows exactly the selected values.
+ * It stays a list even when it names every value there is now, so values that appear later stay
+ * out of it; only the filter for all values follows them.
  * @param {Iterable<string>} selected
- * @param {readonly string[]} every
  * @returns {Filter<string>}
  */
-export function selection(selected, every) {
-  const values = new Set(selected);
-  return every.every((value) => values.has(value)) ? { kind: "all" } : { kind: "only", values };
+export function only(selected) {
+  return { kind: "only", values: new Set(selected) };
 }

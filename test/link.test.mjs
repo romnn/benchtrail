@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { dimensionParam, emptyLink, formatLink, parseLink } from "../site/benchtrail/core/link.js";
-import { reduce, selection } from "../site/benchtrail/core/selection.js";
+import { only, reduce } from "../site/benchtrail/core/selection.js";
 
 // Links the page writes today, which must read back to exactly the same text.
 const LINKS = [
@@ -70,9 +70,8 @@ test("a new range shows all of it", () => {
   assert.deepEqual(reduce(zoomed, { type: "range", range: "30" }).window, { kind: "full" });
 });
 
-test("a selection of every current value reads as all values", () => {
-  assert.deepEqual(selection(["a", "b"], ["a", "b"]), { kind: "all" });
-  assert.deepEqual(selection(["a"], ["a", "b"]), { kind: "only", values: new Set(["a"]) });
+test("a selection of every current value stays a list, so later values stay out of it", () => {
+  assert.deepEqual(only(["a", "b"]), { kind: "only", values: new Set(["a", "b"]) });
   // Clearing a dimension's filter removes it from the link.
   const filtered = parseLink("?threads=4");
   assert.equal(formatLink(reduce(filtered, { type: "dimension", key: "threads", filter: { kind: "all" } })), "");

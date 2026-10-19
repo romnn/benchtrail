@@ -13,7 +13,7 @@ import { buildSuite, readSettings, safeUrl, suiteSettings, valueText } from "./b
 import { linkPart, MISSING, token, urlText } from "./benchtrail/core/identity.js";
 import { AXES, admits, formatLink, parseLink, RANGES, SCALES, SMOOTHING } from "./benchtrail/core/link.js";
 import { compareOrder, unique } from "./benchtrail/core/list.js";
-import { reduce, selection } from "./benchtrail/core/selection.js";
+import { only, reduce } from "./benchtrail/core/selection.js";
 import { changeElement, h, icon } from "./benchtrail/dom.js";
 
 const echarts = window.echarts;
@@ -381,7 +381,7 @@ function publish() {
 // Settles a link against the data, so it names only what exists and leaves out what follows from
 // the data anyway:
 // - the first suite and section stay implicit, and an unknown one falls back to the first;
-// - filters keep only values that exist, and a filter keeping all of them is dropped;
+// - a dimension filter outside the section is dropped;
 // - a color or dash choice the pivot cannot honor is dropped;
 // - an explicit smoothing window equal to the suite's default follows the default;
 // - a selected run that is the newest, or outside the range, follows the newest run;
@@ -394,23 +394,10 @@ function settle(next) {
   settled.section = s.sections.length > 1 && at !== s.sections[0] ? sectionRef(at) : null;
 
   // Filters
-  if (next.metrics.kind === "only") {
-    const slugs = at.metrics.map((m) => m.slug);
-    settled.metrics = selection(
-      slugs.filter((slug) => next.metrics.values.has(slug)),
-      slugs,
-    );
-  }
   const dimensions = new Map();
   for (const d of at.dims) {
     const filter = next.dimensions.get(d.key);
-    if (!filter || filter.kind === "all") continue;
-    const params = d.values.map((v) => v.param);
-    const kept = selection(
-      params.filter((param) => filter.values.has(param)),
-      params,
-    );
-    if (kept.kind === "only") dimensions.set(d.key, kept);
+    if (filter && filter.kind === "only") dimensions.set(d.key, filter);
   }
   settled.dimensions = dimensions;
 
@@ -644,14 +631,14 @@ function renderFilters() {
   // a suite has.
   const filters = [];
   if (section.metrics.length > 1) {
-    const ids = section.metrics.map((metric) => metric.slug);
     filters.push({
       key: "\u0000metric",
       label: "Metric",
       inline: section.metrics.length <= 4,
       items: section.metrics.map((metric) => ({ id: metric.slug, text: metric.label, style: null })),
+      filtered: link.metrics.kind === "only",
       shown: (id) => admits(link.metrics, id),
-      show: (selected, draw) => dispatch({ type: "metrics", metrics: selection(selected, ids) }, draw),
+      show: (selected) => dispatch({ type: "metrics", metrics: selected === "all" ? { kind: "all" } : only(selected) }),
     });
   }
   for (const d of section.dims.filter((d) => d.values.length > 1)) {
@@ -661,14 +648,14 @@ function renderFilters() {
       if (d.key === view.pivot.dash) return { slot: null, dash: DASHES[value.index % DASHES.length] };
       return null;
     };
-    const ids = d.values.map((value) => value.param);
     filters.push({
       key: d.key,
       label: d.label,
       inline: legend,
       items: d.values.map((value) => ({ id: value.param, text: value.token === MISSING ? "none" : value.text, style: style(value) })),
+      filtered: link.dimensions.has(d.key),
       shown: (id) => admits(link.dimensions.get(d.key), id),
-      show: (selected, draw) => dispatch({ type: "dimension", key: d.key, filter: selection(selected, ids) }, draw),
+      show: (selected) => dispatch({ type: "dimension", key: d.key, filter: selected === "all" ? { kind: "all" } : only(selected) }),
     });
   }
   // Inline rows first, so the legend keeps its place while menus are opened and closed.
@@ -677,12 +664,10 @@ function renderFilters() {
   if (ui.menu) restoreMenu();
 }
 
-// The ids a filter shows after toggling one of them.
+// The ids a filter shows after toggling one of them, in the filter's own order, so one selection
+// always reads as the same link.
 function toggled(filter, id) {
-  const shown = new Set(filter.items.map((item) => item.id).filter(filter.shown));
-  if (shown.has(id)) shown.delete(id);
-  else shown.add(id);
-  return shown;
+  return filter.items.map((item) => item.id).filter((other) => (other === id ? !filter.shown(other) : filter.shown(other)));
 }
 
 function inlineFilter(filter) {
@@ -695,6 +680,8 @@ function inlineFilter(filter) {
       "span",
       { class: "chips" },
       ...filter.items.map((item) => toggleChip(item.text, filter.shown(item.id), item.style, () => filter.show(toggled(filter, item.id)))),
+      // A filtered row offers to show every value again, including values recorded later.
+      filter.filtered ? h("button", { type: "button", class: "option chips-all", onclick: () => filter.show("all") }, "Show all") : null,
     ),
   );
 }
@@ -706,14 +693,14 @@ function inlineFilter(filter) {
 function menuFilter(filter) {
   const total = filter.items.length;
   const visible = filter.items.filter((item) => filter.shown(item.id));
-  const summary =
-    visible.length === total
-      ? "all"
-      : visible.length === 0
-        ? "none"
-        : visible.length <= 2
-          ? visible.map((item) => item.text).join(", ")
-          : `${visible.length} of ${total}`;
+  // An explicit list of every value reads as a count, apart from the filter for all values.
+  const summary = !filter.filtered
+    ? "all"
+    : visible.length === 0
+      ? "none"
+      : visible.length <= 2
+        ? visible.map((item) => item.text).join(", ")
+        : `${visible.length} of ${total}`;
   const open = ui.menu?.key === filter.key;
   const apply = (selected, focus) => {
     const panel = document.querySelector(`.menu[data-menu="${CSS.escape(filter.key)}"] .menu-panel`);
@@ -754,19 +741,18 @@ function menuFilter(filter) {
           },
         })
       : null;
-  const all =
-    visible.length < total
-      ? h(
-          "button",
-          {
-            type: "button",
-            class: "option menu-all",
-            "data-focus": "\u0000all",
-            onclick: () => apply(new Set(filter.items.map((item) => item.id)), "\u0000all"),
-          },
-          "Show all",
-        )
-      : null;
+  const all = filter.filtered
+    ? h(
+        "button",
+        {
+          type: "button",
+          class: "option menu-all",
+          "data-focus": "\u0000all",
+          onclick: () => apply("all", "\u0000all"),
+        },
+        "Show all",
+      )
+    : null;
   const items = filter.items.map((item) => {
     const id = `menu-${encodeURIComponent(filter.key)}-${encodeURIComponent(item.id)}`;
     return h(
