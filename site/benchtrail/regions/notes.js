@@ -33,5 +33,10 @@ export function notesRegion(page) {
     container.replaceChildren(...[button, list].filter(Boolean));
   }
 
-  return { roots: ["notes"], render: renderNotes };
+  // A new suite, section, or page folds its problems away.
+  function reset() {
+    expanded = false;
+  }
+
+  return { roots: ["notes"], render: renderNotes, reset };
 }
