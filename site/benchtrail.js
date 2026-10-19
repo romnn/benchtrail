@@ -16,6 +16,7 @@ import { buildSuite, readSettings, suiteSettings } from "./benchtrail/core/histo
 import { formatLink, parseLink } from "./benchtrail/core/link.js";
 import { reduce } from "./benchtrail/core/selection.js";
 import { buildView, SLOTS, settle, smoothingWindow } from "./benchtrail/core/view.js";
+import { percentOfRun, runsIn, windowAt, zoomOf } from "./benchtrail/core/viewport.js";
 import { h } from "./benchtrail/dom.js";
 import { changesRegion } from "./benchtrail/regions/changes.js";
 import { chartsRegion } from "./benchtrail/regions/charts.js";
@@ -123,7 +124,7 @@ async function boot() {
     axis: () => link.axis,
     zoom,
     window: zoomWindow,
-    percentOfRun: (j) => percentOfRun(j),
+    percentOfRun: (j) => percentOfRun(view.runs, j, link.axis),
     refit: (/** @type {any} */ chart) => {
       const yAxis = yRange(zoomWindow(), chart.plotted, chart.log);
       // The tick formatter reads the step from this object, so labels follow the refitted axis.
@@ -574,24 +575,6 @@ function wireControls() {
 
 // The zoom window
 
-// Zoom windows are percentages of the x axis, which spans run positions or dates.
-function percentOfRun(j, axis = link.axis) {
-  const runs = view.runs;
-  if (runs.length < 2) return 0;
-  if (axis === "date") {
-    const span = runs.at(-1).date - runs[0].date;
-    return span > 0 ? ((runs[j].date - runs[0].date) / span) * 100 : 0;
-  }
-  return (j / (runs.length - 1)) * 100;
-}
-
-function runAtPercent(percent, axis = link.axis) {
-  const runs = view.runs;
-  if (axis !== "date") return runs[Math.round((percent / 100) * (runs.length - 1))];
-  const target = runs[0].date + (percent / 100) * (runs.at(-1).date - runs[0].date);
-  return runs.reduce((best, run) => (Math.abs(run.date - target) < Math.abs(best.date - target) ? run : best));
-}
-
 // The zoom window as a gesture left it, in percent of the x axis, while the link still holds the
 // window it was committed as; see `zoom`.
 // The timer is 0 while no gesture waits to be committed.
@@ -607,7 +590,7 @@ function zoomMoved(start, end) {
     safely(() => {
       zoomTimer = 0;
       const settled = gesture;
-      dispatch({ type: "set", changes: { window: windowAt(settled, settled.axis) } }, () => {
+      dispatch({ type: "set", changes: { window: windowAt(view.runs, settled, settled.axis) } }, () => {
         settled.window = link.window;
         for (const region of [regions.changes, regions.runs]) if (onPage(region)) region.render();
         // The movers table ranks lines over the window, so it follows the window once it settles.
@@ -624,7 +607,7 @@ function commitGesture() {
   if (!zoomTimer) return false;
   clearTimeout(zoomTimer);
   zoomTimer = 0;
-  link = settle(suites, reduce(link, { type: "set", changes: { window: windowAt(gesture, gesture.axis) } }));
+  link = settle(suites, reduce(link, { type: "set", changes: { window: windowAt(view.runs, gesture, gesture.axis) } }));
   gesture.window = link.window;
   return true;
 }
@@ -633,19 +616,7 @@ function commitGesture() {
 // changes for another reason, otherwise the positions of the runs the link names.
 function zoom() {
   if (gesture && gesture.window === link.window && gesture.axis === link.axis) return gesture;
-  const window = link.window;
-  if (window.kind === "full" || view.runs.length === 0) return { start: 0, end: 100 };
-  const position = (key) => view.runs.findIndex((run) => run.key === key);
-  const from = position(window.from);
-  const to = position(window.to);
-  return { start: from < 0 ? 0 : percentOfRun(from), end: to < 0 ? 100 : percentOfRun(to) };
-}
-
-// The link's window for a zoom window in percent of an axis: the runs at its ends.
-/** @returns {import("./benchtrail/core/link.js").PlotWindow} */
-function windowAt({ start, end }, axis) {
-  if ((start <= 0 && end >= 100) || view.runs.length === 0) return { kind: "full" };
-  return { kind: "between", from: runAtPercent(start, axis).key, to: runAtPercent(end, axis).key };
+  return zoomOf(view.runs, link.window, link.axis);
 }
 
 // The view positions of the first and last run in the zoom window, computed once per window and
@@ -656,19 +627,8 @@ function zoomWindow() {
   const current = zoom();
   const key = `${current.start}|${current.end}|${link.axis}`;
   if (windowCache?.view === view && windowCache.key === key) return windowCache;
-  const zoomed = zoomedRuns();
-  // Runs in a view are consecutive, so a run's position is its index past the view's offset.
-  const first = zoomed ? zoomed.from.index - view.offset : 0;
-  const last = zoomed ? zoomed.to.index - view.offset : view.runs.length - 1;
-  windowCache = { view, key, first, last };
+  windowCache = { view, key, ...runsIn(view.runs, current, link.axis) };
   return windowCache;
-}
-
-// The first and last run inside the zoom window, or null when nothing is zoomed.
-function zoomedRuns() {
-  const { start, end } = zoom();
-  if ((start <= 0 && end >= 100) || view.runs.length === 0) return null;
-  return { from: runAtPercent(start), to: runAtPercent(end) };
 }
 
 // Helpers
