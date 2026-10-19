@@ -71,6 +71,18 @@ The remaining keys apply to every suite at the top level, or to one suite under 
 
 The comment above the block in `index.html` is the reference for these keys.
 
+### Links
+
+Every view is a link: the suite, section, filters, zoom window, and selected run live in the query
+string, so the address bar can be shared as it is.
+Only the theme stays out of it, as a choice remembered in the reader's browser.
+
+"All runs" opens a page that lists every run, with a search, a sort by any line's change, and a way
+back to each run in the charts.
+A chart's title opens that chart on a page of its own, as `?chart=<metric>:<dimensions>`.
+Both open in place: Back returns to the earlier view, and the Overview link keeps the filters,
+window, and run chosen on the page.
+
 ## Typed benchmarks
 
 Without configuration, a benchmark's name is its only dimension.
@@ -147,6 +159,14 @@ checks and scripts below.
 
 `sample/edge-cases.js` collects the irregular data real histories contain; open it with
 `?data=../sample/edge-cases.js`.
+
+`site/benchtrail.js` loads the history and draws the page the link opens.
+The modules it loads keep the browser at the edge:
+
+- `benchtrail/core/` reads the history, detects changes, reads and writes links, and builds the
+  view and chart options; it touches no browser API, so the Node tests cover it directly.
+- `benchtrail/regions/` draws each part of a page, such as the header, the charts, or the run list.
+- `benchtrail/chart-runtime.js` owns the ECharts instances and syncs zoom and hover between them.
 
 ### Releasing
 
