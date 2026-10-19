@@ -9,11 +9,12 @@
 
 import { BASELINE_RUNS, median, relative } from "./benchtrail/core/detect.js";
 import { displayUnit, formatDate, formatDateTime, formatTick, formatValue, timeFormat } from "./benchtrail/core/format.js";
-import { buildSuite, readSettings, safeUrl, suiteSettings, valueText } from "./benchtrail/core/history.js";
-import { linkPart, MISSING, token, urlText } from "./benchtrail/core/identity.js";
+import { buildSuite, readSettings, safeUrl, suiteSettings } from "./benchtrail/core/history.js";
+import { MISSING, urlText } from "./benchtrail/core/identity.js";
 import { AXES, admits, formatLink, parseLink, RANGES, SCALES, SMOOTHING } from "./benchtrail/core/link.js";
-import { compareOrder, unique } from "./benchtrail/core/list.js";
+import { unique } from "./benchtrail/core/list.js";
 import { only, reduce } from "./benchtrail/core/selection.js";
+import { badness, buildView, colorable, DASHES, dashable, judge, rankMovers, SLOTS, sectionRef, settle, smoothingWindow } from "./benchtrail/core/view.js";
 import { changeElement, h, icon } from "./benchtrail/dom.js";
 
 const echarts = window.echarts;
@@ -27,10 +28,6 @@ const LOG_SPAN = 20;
 // Past this many lines, the page opens on the ranked movers table instead of charts.
 const MOVERS_FROM = 48;
 const MOVERS_PAGE = 30;
-// Values at each end of the window whose medians give a line's net change.
-const MOVER_ENDS = 5;
-const SLOTS = 8;
-const DASHES = ["solid", "dashed", "dotted"];
 
 const READOUTS = [
   { key: "basic", label: "Value and change" },
@@ -97,7 +94,7 @@ async function boot() {
   }
   for (const s of suites) for (const problem of s.problems.keys()) console.warn(`benchtrail: ${s.name}: ${problem}`);
 
-  link = settle(link);
+  link = settle(suites, link);
   publish();
 
   // Canvas text keeps whatever font is ready when it draws, so wait briefly for the web font.
@@ -168,197 +165,17 @@ function loadHistory(url) {
 
 // View: the slice of the section that the filters select, and how it is laid out
 
-// The dimensions that can color lines or dash them, given how many distinct styles each provides.
-function colorable(d) {
-  return d.varying && d.values.length <= SLOTS * 2;
-}
-
-function dashable(d, colorDim) {
-  return d.varying && d.values.length <= DASHES.length && (!colorDim || colorDim.values.length <= SLOTS);
-}
-
-// The configured default window, when it is one of the offered sizes.
-function defaultSmoothing(s = suite) {
-  const configured = Number(s?.settings.smoothing ?? 0);
-  return SMOOTHING.some((option) => option.key === configured) ? configured : 0;
-}
-
-// The smoothing window in effect: the reader's choice, or the current suite's default until the
-// reader picks one, so switching suites follows each suite's own default.
-function smoothing() {
-  return link.smoothing.kind === "explicit" ? link.smoothing.window : defaultSmoothing();
-}
-
-// Picks which dimension colors the lines, which sets their dash, and which split the charts.
-// Every varying dimension that neither colors nor dashes splits the charts, so no two lines in one
-// chart ever look the same.
-function choosePivot(at = section, from = link) {
-  const varying = at.dims.filter((d) => d.varying);
-  const size = (d) => d.values.length;
-  const pick = (choice, configured, allowed, auto) => {
-    if (choice.kind === "none") return null;
-    if (choice.kind === "by" && allowed.some((d) => d.key === choice.key)) return choice.key;
-    if (typeof configured === "string" && allowed.some((d) => d.key === configured)) return configured;
-    return auto();
-  };
-
-  const colorChoices = varying.filter(colorable);
-  const color = pick(from.color, at.settings.colorBy, colorChoices, () => {
-    const fits = colorChoices.filter((d) => size(d) <= SLOTS);
-    if (fits.length) return fits.reduce((best, d) => (size(d) > size(best) ? d : best)).key;
-    return colorChoices.length ? colorChoices.reduce((best, d) => (size(d) < size(best) ? d : best)).key : null;
-  });
-  const colorDim = varying.find((d) => d.key === color);
-  const dashChoices = varying.filter((d) => d.key !== color && dashable(d, colorDim));
-  const dash = pick(from.dash, at.settings.dashBy, dashChoices, () => {
-    if (!colorDim || !dashChoices.length) return null;
-    return dashChoices.reduce((best, d) => (size(d) < size(best) ? d : best)).key;
-  });
-  const facet = varying.filter((d) => d.key !== color && d.key !== dash).map((d) => d.key);
-  return { color, dash, facet };
-}
-
+// Draws from a fresh view of the link; a hover index belongs to the previous view's runs, so it
+// never carries over.
 function computeView() {
-  suite = suites.find((s) => s.name === link.suite) ?? suites[0];
-  section = findSection(suite, link.section);
-  const runs = rangeRuns(suite, link.range);
-  const offset = suite.runs.length - runs.length;
-  const pivot = choosePivot();
-  const metrics = section.metrics.filter((m) => admits(link.metrics, m.slug));
-  const dimsByKey = new Map(section.dims.map((d) => [d.key, d]));
-  // A hover index belongs to the previous view's runs, so it never carries over.
+  view = buildView(suites, link);
+  suite = view.suite;
+  section = view.section;
   resetHover();
-
-  const passes = (dims) => section.dims.every((d) => admits(link.dimensions.get(d.key), urlText(dims[d.key])));
-
-  // Each line keeps the runs in range that its trace owns, in run order, so per-line work scales
-  // with its own observations rather than with every run.
-  const lines = [];
-  for (const trace of section.traces) {
-    const history = trace.history;
-    if (!admits(link.metrics, history.metric.slug) || !passes(trace.dims)) continue;
-    const points = [];
-    for (const i of trace.own) if (i >= offset) points.push(i);
-    if (!points.some((i) => history.values[i] !== null)) continue;
-    const facetDims = pivot.facet.map((key) => dimsByKey.get(key));
-    const facetValues = facetDims.map((d) => d.byToken.get(token(trace.dims[d.key])));
-    lines.push({
-      history,
-      trace,
-      name: trace.key,
-      metricId: history.metric.key,
-      unit: history.metric.unit,
-      points,
-      label: trace.label,
-      sortKey: trace.slug,
-      style: lineStyle(trace, pivot, dimsByKey),
-      facet: {
-        token: facetValues.map((v) => v.token).join("\u0003"),
-        label: facetDims.map((d, i) => valueText(d, facetValues[i].value)).join(" / "),
-        order: facetValues.map((v) => v.index),
-      },
-    });
-  }
-  // Lines sort by facet, then color, then dash, so tables read in the same order as the charts.
-  lines.sort((a, b) => compareOrder(a.facet.order, b.facet.order) || a.style.colorIndex - b.style.colorIndex || a.style.dashIndex - b.style.dashIndex);
-
-  // The first value in the range is the baseline for the change view; a zero baseline has no
-  // relative change, so that line is left out of the change view rather than rebased.
-  const baseline = new Map();
-  for (const line of lines) {
-    const first = line.points.find((i) => line.history.values[i] !== null);
-    baseline.set(line.name, first === undefined ? null : line.history.values[first]);
-  }
-
-  // Runs where a visible history crossed a comparison boundary, with what changed.
-  const boundaries = new Map();
-  for (const line of lines) {
-    for (const i of line.points) {
-      // An observation without a usable value still starts its segment, so it keeps its marker.
-      const changes = line.history.boundary[i];
-      if (!changes) continue;
-      boundaries.set(i, unique([...(boundaries.get(i) ?? []), ...changes]));
-    }
-  }
-
-  const pinned = link.run;
-  let selected = pinned.kind === "at" ? runs.findIndex((run) => run.key === pinned.key) : -1;
-  if (selected < 0) selected = runs.length - 1;
-  view = { runs, offset, benches: lines, metrics, baseline, boundaries, selected, pivot, counts: null, moves: null };
 }
 
-// A line's color comes from its value of the color dimension and its dash from the dash
-// dimension, both by the value's fixed position, so filtering never repaints the lines that stay.
-function lineStyle(trace, pivot, dimsByKey) {
-  const colorDim = pivot.color ? dimsByKey.get(pivot.color) : null;
-  const dashDim = pivot.dash ? dimsByKey.get(pivot.dash) : null;
-  const colorIndex = colorDim ? colorDim.byToken.get(token(trace.dims[colorDim.key])).index : 0;
-  let dashIndex = dashDim ? dashDim.byToken.get(token(trace.dims[dashDim.key])).index : 0;
-  if (!dashDim && colorIndex >= SLOTS) dashIndex = 1;
-  const parts = [colorDim, dashDim].filter(Boolean).map((d) => valueText(d, trace.dims[d.key]));
-  return {
-    slot: colorIndex % SLOTS,
-    colorIndex,
-    dashIndex,
-    dash: DASHES[dashIndex % DASHES.length],
-    label: parts.join(" / ") || trace.label,
-  };
-}
-
-// A line's value and change at a run, read through its trace's own runs, so a history split into
-// many traces never copies its full-length arrays once per trace.
-function valueAt(line, runIndex) {
-  return line.trace.own.has(runIndex) ? line.history.values[runIndex] : null;
-}
-
-function changeAt(line, runIndex) {
-  return line.trace.own.has(runIndex) ? line.history.change[runIndex] : null;
-}
-
-// A line's recorded spread, note, and environment at a run, by ownership rather than by value,
-// so they stay readable for an observation whose value is missing.
-function rangeAt(line, runIndex) {
-  return line.trace.own.has(runIndex) ? line.history.ranges[runIndex] : null;
-}
-
-function textAt(line, runIndex) {
-  return line.trace.own.has(runIndex) ? line.history.texts[runIndex] : null;
-}
-
-function environmentAt(line, runIndex) {
-  return line.trace.own.has(runIndex) ? line.history.envAt[runIndex] : null;
-}
-
-function badness(metric, change) {
-  if (change === null || metric.direction === "unknown") return null;
-  return metric.direction === "higher" ? -change : change;
-}
-
-// The detected verdict for a line at a run: worse or better at a shift, noise for any other
-// value judged against a baseline, unjudged for a value without enough earlier runs to judge it,
-// and none where nothing was measured.
-function lineVerdict(line, runIndex) {
-  if (valueAt(line, runIndex) === null) return "none";
-  const detected = line.history.shifts[runIndex];
-  if (detected) return detected.kind;
-  if (changeAt(line, runIndex) === null) return "none";
-  return line.history.baselines[runIndex] === null ? "unjudged" : "noise";
-}
-
-// A verdict from a change ratio alone, against the configured threshold, for comparisons that are
-// not change points, such as a value against its baseline.
-function verdict(metric, change) {
-  const bad = badness(metric, change);
-  if (bad === null) return change === null ? "none" : "noise";
-  if (bad > config.threshold) return "worse";
-  if (bad < -config.threshold) return "better";
-  return "noise";
-}
-
-// The runs a range keeps, newest last.
-function rangeRuns(s, rangeKey) {
-  const range = RANGES.find((r) => r.key === rangeKey) ?? RANGES[RANGES.length - 1];
-  return s.runs.slice(Math.max(0, s.runs.length - range.count));
+function smoothing() {
+  return smoothingWindow(suite, link);
 }
 
 // Changing the link
@@ -366,7 +183,7 @@ function rangeRuns(s, rangeKey) {
 // Applies the reader's action to the link, settles the result against the data, writes it to the
 // address bar, and then draws what changed: the whole page unless the caller names less.
 function dispatch(action, draw = render) {
-  link = settle(reduce(link, action));
+  link = settle(suites, reduce(link, action));
   publish();
   draw();
 }
@@ -376,50 +193,6 @@ function dispatch(action, draw = render) {
 function publish() {
   const query = formatLink(link);
   history.replaceState(history.state, "", `${location.pathname}${query ? `?${query}` : ""}`);
-}
-
-// Settles a link against the data, so it names only what exists and leaves out what follows from
-// the data anyway:
-// - the first suite and section stay implicit, and an unknown one falls back to the first;
-// - a dimension filter outside the section is dropped;
-// - a color or dash choice the pivot cannot honor is dropped;
-// - an explicit smoothing window equal to the suite's default follows the default;
-// - a selected run outside the range follows the newest run;
-// - a window that names runs outside the range is clipped, and one covering it all is dropped.
-function settle(next) {
-  const s = suites.find((candidate) => candidate.name === next.suite) ?? suites[0];
-  const at = findSection(s, next.section);
-  const settled = { ...next };
-  settled.suite = s === suites[0] ? null : s.name;
-  settled.section = s.sections.length > 1 && at !== s.sections[0] ? sectionRef(at) : null;
-
-  // Filters
-  const dimensions = new Map();
-  for (const d of at.dims) {
-    const filter = next.dimensions.get(d.key);
-    if (filter && filter.kind === "only") dimensions.set(d.key, filter);
-  }
-  settled.dimensions = dimensions;
-
-  // Pivot
-  const pivot = choosePivot(at, settled);
-  if (next.color.kind === "by" && next.color.key !== pivot.color) settled.color = { kind: "auto" };
-  if (next.dash.kind === "by" && next.dash.key !== pivot.dash) settled.dash = { kind: "auto" };
-
-  if (next.smoothing.kind === "explicit" && next.smoothing.window === defaultSmoothing(s)) settled.smoothing = { kind: "configured" };
-
-  // Run and window
-  const runs = rangeRuns(s, next.range);
-  const position = (key) => (key === null ? -1 : runs.findIndex((run) => run.key === key));
-  if (next.run.kind === "at" && position(next.run.key) < 0) settled.run = { kind: "latest" };
-  if (next.window.kind === "between") {
-    const from = Math.max(0, position(next.window.from));
-    const to = position(next.window.to);
-    const end = to < 0 ? runs.length - 1 : to;
-    settled.window =
-      runs.length === 0 || (from === 0 && end === runs.length - 1) ? { kind: "full" } : { kind: "between", from: runs[from].key, to: runs[end].key };
-  }
-  return settled;
 }
 
 // Rendering
@@ -561,33 +334,6 @@ function renderSuites() {
       ),
     ),
   );
-}
-
-// A link names a section by its dimension keys, which stay put as runs are added.
-// When no section has exactly those keys, as after a section gained a dimension, the first
-// section with all of them is chosen.
-// A section without dimensions is named by its benchmark, which is found again in whichever
-// section holds it once it gains dimensions.
-function findSection(s, wanted) {
-  if (!wanted) return s.sections[0];
-  if (wanted.kind === "benchmark") {
-    return (
-      s.sections.find((candidate) => candidate.link === wanted.link) ??
-      s.sections.find((candidate) =>
-        candidate.histories.some((history) => `#${history.benchmarkId === null ? "" : linkPart(history.benchmarkId)}` === wanted.link),
-      ) ??
-      s.sections[0]
-    );
-  }
-  const { keys } = wanted;
-  const keyed = s.sections.filter((candidate) => candidate.keys.length);
-  const exact = keyed.find((candidate) => candidate.keys.length === keys.length && keys.every((key) => candidate.keys.includes(key)));
-  return exact ?? keyed.find((candidate) => keys.every((key) => candidate.keys.includes(key))) ?? s.sections[0];
-}
-
-/** @returns {import("./benchtrail/core/link.js").SectionRef} */
-function sectionRef(s) {
-  return s.link === null ? { kind: "keys", keys: s.keys } : { kind: "benchmark", link: s.link };
 }
 
 // A new section closes its filter menu and starts its movers table at the first page.
@@ -874,7 +620,7 @@ function renderTrail() {
 // A run without any shift gets a short neutral tick, so the trail still shows every run.
 function trailOption(t) {
   const byDate = link.axis === "date";
-  const counts = view.runs.map((run) => countVerdicts(run));
+  const counts = view.runs.map((run) => view.counts(run));
   const reach = Math.max(1, ...counts.map(({ worse, better, moved }) => Math.sqrt(Math.max(worse + moved, better))));
   const point = (run, y) => (byDate ? [run.date, y] : y);
   const up = (count, { worse, moved }) => (count ? (Math.sqrt(worse + moved) * count) / (worse + moved) : null);
@@ -937,8 +683,8 @@ function renderCharts() {
   const groups = [];
   for (const metric of view.metrics) {
     const cells = new Map();
-    for (const line of view.benches) {
-      if (line.metricId !== metric.key) continue;
+    for (const line of view.lines) {
+      if (line.metric.key !== metric.key) continue;
       if (!cells.has(line.facet.token)) {
         cells.set(line.facet.token, { key: `${metric.key}\u0002${line.facet.token}`, metric, title: faceted ? line.facet.label : metric.label, benches: [] });
       }
@@ -1044,7 +790,7 @@ function buildReadout(chart) {
   const open = ui.openReadouts.has(chart.key);
   const lines = open ? chart.benches : chart.benches.slice(0, READOUT_ROWS);
   // The spread column appears only for lines that record one.
-  const spread = link.more && chart.benches.some((line) => line.points.some((i) => line.history.ranges[i]));
+  const spread = link.more && chart.benches.some((line) => line.points.some((i) => line.spread(i)));
   chart.readoutItems = lines.map((line) => {
     const cells = { value: h("td", { class: "readout-value" }), change: h("td"), spread: h("td"), median: h("td") };
     const row = h(
@@ -1104,18 +850,18 @@ function buildReadout(chart) {
 function updateReadouts(run) {
   for (const chart of charts) {
     for (const { line, cells } of chart.readoutItems ?? []) {
-      const value = valueAt(line, run.index);
-      const change = changeAt(line, run.index);
-      const kind = lineVerdict(line, run.index);
+      const value = line.value(run.index);
+      const change = line.change(run.index);
+      const kind = line.judgement(run.index);
       cells.value.textContent = value === null ? "–" : formatValue(value, line.unit);
       cells.change.replaceChildren(changeElement(change, kind));
       // A row whose run regressed or improved is emphasized, so the lines that moved stand out.
       cells.value.parentElement.dataset.verdict = kind;
       if (link.more) {
-        const base = line.history.baselines[run.index];
+        const base = line.detectionBaseline(run.index);
         const vsBase = value !== null && base ? relative(value, base) : null;
-        cells.spread.textContent = rangeAt(line, run.index) ?? "–";
-        cells.median.replaceChildren(changeElement(vsBase, verdict(chart.metric, vsBase)));
+        cells.spread.textContent = line.spread(run.index) ?? "–";
+        cells.median.replaceChildren(changeElement(vsBase, judge(chart.metric, vsBase, config.threshold)));
       }
     }
   }
@@ -1123,13 +869,13 @@ function updateReadouts(run) {
 
 function currentLayout() {
   if (link.layout !== "auto") return link.layout;
-  return view.benches.length > MOVERS_FROM ? "movers" : "charts";
+  return view.lines.length > MOVERS_FROM ? "movers" : "charts";
 }
 
 // The switch between charts and the movers table, shown once there are enough lines to need it.
 function renderLayoutSwitch() {
   const bar = document.getElementById("layout");
-  bar.hidden = view.benches.length <= 8;
+  bar.hidden = view.lines.length <= 8;
   if (bar.hidden) return;
   const current = currentLayout();
   bar.replaceChildren(
@@ -1151,52 +897,17 @@ function renderLayoutSwitch() {
         option.label,
       ),
     ),
-    h("span", { class: "layout-count" }, `${view.benches.length} lines`),
+    h("span", { class: "layout-count" }, `${view.lines.length} lines`),
   );
 }
 
 // Movers: every visible line ranked by its net change across the window in view, worst first,
 // with a sparkline.
-// The net change compares the medians of the first and last MOVER_ENDS values, so a single noisy
-// run at either end does not decide the rank.
-// It only spans the latest comparison segment in the window, so a changed parameter or toolchain
-// never counts as a move.
 // Choosing a row narrows the filters to that line's chart and switches to charts.
 function renderMovers(container) {
   const { first, last } = zoomWindow();
   const runs = view.runs.slice(first, last + 1);
-  const from = runs[0]?.index ?? 0;
-  const to = runs.at(-1)?.index ?? -1;
-
-  // Rows are ranked from each line's own observations in the window; only the rows shown build
-  // a sparkline across every run.
-  const rows = [];
-  for (const line of view.benches) {
-    const history = line.history;
-    const inWindow = line.points.filter((i) => i >= from && i <= to && history.values[i] !== null);
-    if (!inWindow.length) continue;
-    const segment = history.segment[inWindow.at(-1)];
-    const measured = inWindow.filter((i) => history.segment[i] === segment).map((i) => history.values[i]);
-    if (measured.length < 2) continue;
-    // The two ends never overlap, so a short segment compares its first and second half.
-    const ends = Math.min(MOVER_ENDS, Math.floor(measured.length / 2));
-    const start = median(measured.slice(0, ends));
-    const end = median(measured.slice(-ends));
-    const change = start ? relative(end, start) : null;
-    const net = Number.isFinite(change) ? change : null;
-    const metric = line.history.metric;
-    const bad = badness(metric, net);
-    const kind = bad === null ? "noise" : bad > config.threshold ? "worse" : bad < -config.threshold ? "better" : "noise";
-    const shifts = inWindow.filter((i) => history.shifts[i]).length;
-    rows.push({ line, net, bad: bad ?? 0, kind, shifts, latest: measured.at(-1) });
-  }
-  rows.sort((a, b) => b.bad - a.bad);
-  // Regressions first, then improvements from the largest, then everything else by size.
-  const ordered = [
-    ...rows.filter((r) => r.kind === "worse"),
-    ...rows.filter((r) => r.kind === "better").reverse(),
-    ...rows.filter((r) => r.kind === "noise").sort((a, b) => Math.abs(b.net ?? 0) - Math.abs(a.net ?? 0)),
-  ];
+  const ordered = rankMovers(view.lines, runs, config.threshold);
 
   const multipleMetrics = view.metrics.length > 1;
   const body = ordered.slice(0, ui.moversShown).map((row) =>
@@ -1211,13 +922,13 @@ function renderMovers(container) {
         { class: "mover-label" },
         lineKey(row.line.style),
         row.line.label,
-        multipleMetrics ? h("span", { class: "metric" }, row.line.history.metric.label) : null,
+        multipleMetrics ? h("span", { class: "metric" }, row.line.metric.label) : null,
       ),
       h(
         "td",
         { class: "spark-cell" },
         sparkline(
-          runs.map((run) => valueAt(row.line, run.index)),
+          runs.map((run) => row.line.value(run.index)),
           row.kind,
         ),
       ),
@@ -1284,8 +995,8 @@ function sparkline(values, kind) {
 // Narrows the filters to the chart that holds a line, then shows charts.
 function openLine(line) {
   const only = (value) => ({ kind: "only", values: new Set([value]) });
-  const dimensions = new Map(view.pivot.facet.map((key) => [key, only(urlText(line.trace.dims[key]))]));
-  dispatch({ type: "focus", metrics: view.metrics.length > 1 ? only(line.history.metric.slug) : null, dimensions });
+  const dimensions = new Map(view.pivot.facet.map((key) => [key, only(urlText(line.dims[key]))]));
+  dispatch({ type: "focus", metrics: view.metrics.length > 1 ? only(line.metric.slug) : null, dimensions });
   document.querySelector(".charts-area")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -1295,16 +1006,16 @@ function directionText(metric) {
   return "direction unknown";
 }
 
-// Smoothed values are cached per trace for the inputs they depend on, so a render that changes
+// Smoothed values are cached per line for the inputs they depend on, so a render that changes
 // nothing about a line, such as toggling another filter, does not smooth it again.
-const smoothCache = new WeakMap();
+const smoothCache = new Map();
 
 function smoothedCached(line, ys, factor, base) {
   const key = `${smoothing()}|${link.scale}|${view.offset}|${view.runs.length}|${factor}|${base}`;
-  const cached = smoothCache.get(line.trace);
+  const cached = smoothCache.get(line.key);
   if (cached?.key === key) return cached.values;
   const values = smoothed(line, ys, smoothing());
-  smoothCache.set(line.trace, { key, values });
+  smoothCache.set(line.key, { key, values });
   return values;
 }
 
@@ -1313,7 +1024,7 @@ function smoothedCached(line, ys, factor, base) {
 // where it happened, where an average would smear it across the window.
 function smoothed(line, ys, window) {
   const half = (window - 1) >> 1;
-  const segment = (j) => line.history.segment[view.runs[j].index];
+  const segment = (j) => line.segment(view.runs[j].index);
   return ys.map((y, j) => {
     if (y === null) return null;
     const near = [];
@@ -1328,7 +1039,7 @@ function groupMagnitude(group) {
   if (group.magnitude !== undefined) return group.magnitude;
   let magnitude = 0;
   for (const cell of group.cells) {
-    for (const line of cell.benches) for (const run of view.runs) magnitude = Math.max(magnitude, Math.abs(valueAt(line, run.index) ?? 0));
+    for (const line of cell.benches) for (const run of view.runs) magnitude = Math.max(magnitude, Math.abs(line.value(run.index) ?? 0));
   }
   // Computed once per group and render, since the heading and every chart of the group ask.
   group.magnitude = magnitude;
@@ -1347,7 +1058,7 @@ function lineOption(metric, benches, t, compact, sharedMagnitude = null, width =
   let smallest = Infinity;
   for (const bench of benches) {
     for (const run of view.runs) {
-      const value = valueAt(bench, run.index);
+      const value = bench.value(run.index);
       if (value === null) continue;
       magnitude = Math.max(magnitude, Math.abs(value));
       smallest = Math.min(smallest, value);
@@ -1363,9 +1074,9 @@ function lineOption(metric, benches, t, compact, sharedMagnitude = null, width =
   const plotted = [];
   for (const [i, bench] of benches.entries()) {
     const color = t.series[bench.style.slot];
-    const base = view.baseline.get(bench.name);
+    const base = view.firstValues.get(bench.key);
     const ys = view.runs.map((run) => {
-      const value = valueAt(bench, run.index);
+      const value = bench.value(run.index);
       if (value === null) return null;
       return asChange ? (base ? relative(value, base) * 100 : null) : value * unit.factor;
     });
@@ -1375,7 +1086,7 @@ function lineOption(metric, benches, t, compact, sharedMagnitude = null, width =
     // With smoothing on, the recorded values stay visible as faint dots behind the trend.
     if (smoothing()) {
       series.push({
-        id: `${bench.name}\u0004raw`,
+        id: `${bench.key}\u0004raw`,
         type: "scatter",
         data: ys.map((y, j) => (byDate ? [view.runs[j].date, y] : y)),
         symbolSize: 3,
@@ -1385,7 +1096,7 @@ function lineOption(metric, benches, t, compact, sharedMagnitude = null, width =
       });
     }
     series.push({
-      id: bench.name,
+      id: bench.key,
       name: bench.style.label,
       type: "line",
       data: points,
@@ -2008,18 +1719,12 @@ function selectRun(index, pin = true) {
     const marker = markers(t, { selection: clamped !== view.runs.length - 1 });
     trail?.setOption({ series: [{ id: "trail", markLine: markers(t, { labels: true }) }] });
     for (const chart of charts) {
-      chart.instance.setOption({ series: [{ id: chart.benches[0].name, markLine: marker }] });
+      chart.instance.setOption({ series: [{ id: chart.benches[0].key, markLine: marker }] });
     }
     renderSelected();
     renderMessage();
     markHistorySelection();
   });
-}
-
-// The visible lines that regressed or improved at a run, regressions first, then by size.
-function significantMoves(run) {
-  tallyView();
-  return view.moves.get(run.index) ?? [];
 }
 
 // A wrapping list of moves, each a signed change beside the line it belongs to.
@@ -2034,7 +1739,7 @@ function movesElement(moves, limit) {
         "span",
         { class: "move" },
         changeElement(change, kind),
-        h("span", { class: "what" }, line.label, multipleMetrics ? h("span", { class: "metric" }, line.history.metric.label) : null),
+        h("span", { class: "what" }, line.label, multipleMetrics ? h("span", { class: "metric" }, line.metric.label) : null),
       ),
     ),
     moves.length > shown.length ? h("span", { class: "move what" }, `${moves.length - shown.length} more`) : null,
@@ -2052,7 +1757,7 @@ function renderChanges() {
   let moved = 0;
   let compared = 0;
   for (let j = last; j >= first; j -= 1) {
-    const counts = countVerdicts(view.runs[j]);
+    const counts = view.counts(view.runs[j]);
     if (counts.measured) compared += 1;
     if (!counts.worse && !counts.better && !counts.moved) continue;
     if (counts.worse) worse += 1;
@@ -2091,7 +1796,7 @@ function renderChanges() {
 
   const shown = link.changes === "all" ? entries : entries.slice(0, CHANGES_SHOWN);
   const items = shown.map(({ run, j }) => {
-    const moves = significantMoves(run);
+    const moves = view.moves(run);
     return h(
       "li",
       {
@@ -2140,7 +1845,7 @@ function renderSelected() {
   }
   bar.classList.toggle("is-preview", shown !== view.selected);
   const boundary = view.boundaries.get(run.index);
-  const { worse, better } = countVerdicts(run);
+  const { worse, better } = view.counts(run);
   const tally = [
     worse
       ? h(
@@ -2207,46 +1912,6 @@ function renderSelected() {
   updateReadouts(run);
 }
 
-// How many visible lines regressed or improved at a run.
-function countVerdicts(run) {
-  tallyView();
-  return view.counts.get(run.index) ?? NO_COUNTS;
-}
-
-const NO_COUNTS = Object.freeze({ worse: 0, better: 0, moved: 0, measured: 0 });
-
-// Counts the verdicts and collects the moves of every run in the view at once, the first time
-// anything asks, by visiting each line's own observations.
-// The trail, the run bar, and the changes list all ask, so this costs one pass over the
-// observations rather than one pass over the lines for every run.
-function tallyView() {
-  if (view.counts) return;
-  const counts = new Map();
-  const moves = new Map();
-  for (const line of view.benches) {
-    for (const i of line.points) {
-      const kind = lineVerdict(line, i);
-      if (kind === "none" || kind === "unjudged") continue;
-      let tally = counts.get(i);
-      if (!tally) {
-        tally = { worse: 0, better: 0, moved: 0, measured: 0 };
-        counts.set(i, tally);
-      }
-      tally.measured += 1;
-      if (kind === "noise") continue;
-      tally[kind] += 1;
-      const { shift, tentative } = line.history.shifts[i];
-      if (!moves.has(i)) moves.set(i, []);
-      moves.get(i).push({ line, change: shift, kind, tentative });
-    }
-  }
-  // Regressions first, then by size.
-  const rank = { worse: 0, better: 1, moved: 2 };
-  for (const list of moves.values()) list.sort((a, b) => rank[a.kind] - rank[b.kind] || Math.abs(b.change) - Math.abs(a.change));
-  view.counts = counts;
-  view.moves = moves;
-}
-
 // The selected run's full commit message and environment, at the foot of the charts.
 // It follows the selection only, not the hover, so nothing below the charts moves while hovering.
 function renderMessage() {
@@ -2256,8 +1921,8 @@ function renderMessage() {
     panel.replaceChildren();
     return;
   }
-  const texts = unique(view.benches.map((b) => textAt(b, run.index)).filter(Boolean));
-  const environment = unique(view.benches.flatMap((b) => Object.entries(environmentAt(b, run.index) ?? {}).map(([key, value]) => `${key} ${value}`)));
+  const texts = unique(view.lines.map((b) => b.note(run.index)).filter(Boolean));
+  const environment = unique(view.lines.flatMap((b) => Object.entries(b.environment(run.index) ?? {}).map(([key, value]) => `${key} ${value}`)));
   const notes = texts.length === 1 ? texts[0] : null;
   const facts = [environment.length ? ["Environment", environment.join(", ")] : null, notes ? ["Notes", notes] : null].filter(Boolean);
   // The subject already heads the run bar, so this section adds only what the bar leaves out.
@@ -2313,12 +1978,12 @@ function renderHistory() {
   const table = document.getElementById("history-table");
   const tokens = searchTokens(link.query);
   const sort = link.sort;
-  const sortLine = sort && view.benches.find((b) => b.sortKey === sort.line);
+  const sortLine = sort && view.lines.find((b) => b.slug === sort.line);
 
   // The list follows the zoom window, so it always shows the runs the charts show.
   const { first, last } = zoomWindow();
   const significant = (run) => {
-    const counts = countVerdicts(run);
+    const counts = view.counts(run);
     return counts.worse + counts.better + counts.moved > 0;
   };
   let runs = view.runs
@@ -2334,7 +1999,7 @@ function renderHistory() {
     // Worst first sorts by regression size, best first by improvement size; runs without a
     // change for this benchmark go last either way.
     const sign = sort.order === "best" ? -1 : 1;
-    const key = ({ run }) => badness(sortLine.history.metric, changeAt(sortLine, run.index));
+    const key = ({ run }) => badness(sortLine.metric, sortLine.change(run.index));
     runs.sort((a, b) => Number(key(a) === null) - Number(key(b) === null) || sign * (key(b) - key(a)));
   } else {
     runs = runs.reverse();
@@ -2352,8 +2017,8 @@ function renderHistory() {
         title: "Sort by change: worst first, then best first, then by date",
         onclick: () => {
           /** @type {import("./benchtrail/core/link.js").Sort | null} */
-          let next = { line: line.sortKey, order: "worst" };
-          if (active) next = sort.order === "worst" ? { line: line.sortKey, order: "best" } : null;
+          let next = { line: line.slug, order: "worst" };
+          if (active) next = sort.order === "worst" ? { line: line.slug, order: "best" } : null;
           ui.shown = PAGE_SIZE;
           dispatch({ type: "set", changes: { sort: next } }, renderHistory);
         },
@@ -2365,7 +2030,7 @@ function renderHistory() {
 
   // A column per line only while the lines fit side by side; past that, or on a narrow screen,
   // one column lists each run's significant moves and wraps, so the table never scrolls sideways.
-  const wide = view.benches.length > HISTORY_COLUMNS || narrow.matches;
+  const wide = view.lines.length > HISTORY_COLUMNS || narrow.matches;
   const head = h(
     "thead",
     {},
@@ -2375,8 +2040,8 @@ function renderHistory() {
       h("th", {}, `${runs.length} ${runs.length === 1 ? "run" : "runs"}`),
       ...(wide
         ? [h("th", {}, "Changes")]
-        : view.benches.map((line) => {
-            const label = view.metrics.length > 1 ? `${line.label} ${line.history.metric.label}` : line.label;
+        : view.lines.map((line) => {
+            const label = view.metrics.length > 1 ? `${line.label} ${line.metric.label}` : line.label;
             return h("th", {}, lineKey(line.style), sortButton(line, label));
           })),
     ),
@@ -2385,11 +2050,11 @@ function renderHistory() {
   const body = h("tbody", {});
   for (const { run, j, match } of runs.slice(0, ui.shown)) {
     const cells = wide
-      ? [h("td", { class: "moves-cell" }, movesElement(significantMoves(run), 4))]
-      : view.benches.map((line) => {
-          const value = valueAt(line, run.index);
-          const change = changeAt(line, run.index);
-          return h("td", {}, value === null ? "–" : formatValue(value, line.unit), changeElement(change, lineVerdict(line, run.index)));
+      ? [h("td", { class: "moves-cell" }, movesElement(view.moves(run), 4))]
+      : view.lines.map((line) => {
+          const value = line.value(run.index);
+          const change = line.change(run.index);
+          return h("td", {}, value === null ? "–" : formatValue(value, line.unit), changeElement(change, line.judgement(run.index)));
         });
     body.append(
       h(
@@ -2408,7 +2073,7 @@ function renderHistory() {
     );
   }
   if (runs.length === 0) {
-    body.append(h("tr", { class: "empty-row" }, h("td", { colspan: String(wide ? 2 : view.benches.length + 1) }, "No runs match.")));
+    body.append(h("tr", { class: "empty-row" }, h("td", { colspan: String(wide ? 2 : view.lines.length + 1) }, "No runs match.")));
   }
   table.replaceChildren(head, body);
 
