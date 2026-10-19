@@ -138,8 +138,8 @@ export function rangeRuns(suite, rangeKey) {
 function resolveTarget(suites, link) {
   const named = link.suite === null ? suites[0] : suites.find((s) => s.name === link.suite);
   const suite = named ?? suites[0];
-  const section = named ? findSection(suite, link.section) : null;
-  return { suite, section: section ?? suite.sections[0], found: section !== null };
+  const section = findSection(suite, link.section);
+  return { suite, section: section ?? suite.sections[0], found: named !== undefined && section !== null };
 }
 
 // A link names a section by its dimension keys, which stay put as runs are added.

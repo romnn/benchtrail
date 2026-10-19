@@ -158,6 +158,8 @@ test("a chart page whose suite or section is gone shows nothing and keeps its li
     assert.equal(buildView(SPLIT, parseLink(query)).chart?.metric, null);
     assert.equal(formatLink(settle(SPLIT, parseLink(query))), query.slice(1));
   }
-  // The overview falls back to the first suite instead.
+  // The overview falls back to the first suite instead, where it still finds the section it names.
   assert.equal(formatLink(settle(SPLIT, parseLink("?suite=gone"))), "");
+  const sectioned = suites({ main: [[entry("a", 1, { dimensions: { doc: "a" } }), entry("b", 1, { dimensions: { os: "linux" } })]] });
+  assert.equal(formatLink(settle(sectioned, parseLink("?suite=gone&section=os"))), "section=os");
 });
