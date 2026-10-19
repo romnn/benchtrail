@@ -68,8 +68,8 @@ const BODIES = [
   "Splits the visitor so models and clients share one traversal.\n\n- one pass over the schema graph instead of two\n- stable output order, so generated files no longer churn between runs\n- removes 1,200 lines of duplicated match arms",
 ];
 
-// Named moments in the history, so the sample shows steps as well as noise. Each multiplies the
-// listed benchmarks from its run onward.
+// Named moments in the history, so the sample shows steps as well as noise.
+// Each multiplies the listed benchmarks from its run onward.
 const EVENTS = [
   { at: 34, subject: "feat(codegen): derive Debug on every generated type", scale: { cpu: 1.07, "ns/iter": 1.0 } },
   { at: 71, subject: "perf(resolve): intern schema names", scale: { "peak rss": 0.88, "ns/iter": 0.93 } },
@@ -133,9 +133,11 @@ let time = START;
 
 for (let run = 0; run < RUNS; run += 1) {
   const event = EVENTS.find((e) => e.at === run);
-  for (const document of [...DOCUMENTS.map((d) => d.name), ...PARSERS.map((p) => p.name)]) {
+  // Each document takes an event once, however many suites measure it.
+  const names = new Set([...DOCUMENTS.map((d) => d.name), ...PARSERS.map((p) => p.name.replace(/^(parse|resolve)\//, ""))]);
+  for (const document of names) {
     for (const metric of ["cpu", "peak rss", "ns/iter"]) {
-      if (event) applyEvent(event, document.replace(/^(parse|resolve)\//, ""), metric);
+      if (event) applyEvent(event, document, metric);
     }
   }
   if (event?.toolchain) {
@@ -232,7 +234,11 @@ for (let run = 0; run < RUNS; run += 1) {
 // A large suite, so the page is exercised past the happy path: hundreds of benchmarks across four
 // dimensions, long names, and a feature dimension that grows a value halfway through.
 const stress = [];
-const CRATES = Array.from({ length: 14 }, (_, i) => `crate-${["core", "serde", "tokio", "hyper", "regex", "syn", "quote", "rand", "clap", "tracing", "rayon", "bytes", "axum", "very-long-crate-name-for-wrapping"][i]}`);
+const CRATES = Array.from(
+  { length: 14 },
+  (_, i) =>
+    `crate-${["core", "serde", "tokio", "hyper", "regex", "syn", "quote", "rand", "clap", "tracing", "rayon", "bytes", "axum", "very-long-crate-name-for-wrapping"][i]}`,
+);
 const FEATURES = ["default", "full", "minimal", "no-std", "simd", "unstable-experimental"];
 for (let run = 0; run < compile.length; run += 1) {
   const benches = [];
@@ -241,7 +247,7 @@ for (let run = 0; run < compile.length; run += 1) {
       if (feature === "unstable-experimental" && run < compile.length / 2) continue;
       for (const profile of ["dev", "release"]) {
         for (const threads of [1, 4, 16]) {
-          const base = (1 + c * 0.7) * (1 + f * 0.15) * (profile === "release" ? 2.4 : 1) / Math.sqrt(threads);
+          const base = ((1 + c * 0.7) * (1 + f * 0.15) * (profile === "release" ? 2.4 : 1)) / Math.sqrt(threads);
           const step = run > 160 && crate === "crate-syn" && feature === "full" ? 1.18 : 1;
           const value = base * step * (1 + gauss() * 0.01);
           benches.push({
@@ -262,7 +268,7 @@ const data = {
   repoUrl: REPO,
   entries: {
     "Generated-crate compile cost": compile,
-    "Pipeline": pipeline,
+    Pipeline: pipeline,
     "Parser throughput": throughput,
     "Many benchmarks": stress,
   },

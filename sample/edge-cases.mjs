@@ -54,11 +54,58 @@ const typedRuns = runs.map((run, i) => ({
     // An unsupported version is reported, not guessed at.
     { name: "future", value: 3, unit: "s", extra: typed({ version: 2, dimensions: {}, metric: { id: "time" } }) },
     // The same metric declared as higher and lower is better leaves its verdicts unknown.
-    { name: "score", value: 50 + (i % 4), unit: "pts", extra: typed({ version: 1, dimensions: { threads: 4, mode: "c" }, metric: { id: "score", direction: i < 12 ? "higher" : "lower" } }) },
+    {
+      name: "score",
+      value: 50 + (i % 4),
+      unit: "pts",
+      extra: typed({ version: 1, dimensions: { threads: 4, mode: "c" }, metric: { id: "score", direction: i < 12 ? "higher" : "lower" } }),
+    },
     // Text that only looks like JSON stays plain text.
     { name: "text", value: 0.5, unit: "s", extra: "{not json, rustc 1.99" },
+    // One run measures the same benchmark on two operating systems.
+    // As a dimension, the operating system splits it into two lines.
+    { name: "two os", value: 1.5, unit: "s", extra: typed({ version: 1, dimensions: { os: "linux" }, metric: { id: "time" } }) },
+    { name: "two os", value: 2.5, unit: "s", extra: typed({ version: 1, dimensions: { os: "macos" }, metric: { id: "time" } }) },
+    // Recorded as the environment instead, it is one benchmark measured twice in a run, which the
+    // page reports while keeping the first value.
+    {
+      name: "multi os",
+      value: 1.5,
+      unit: "s",
+      extra: typed({ version: 1, benchmarkId: "multi", dimensions: {}, metric: { id: "time" }, environment: { os: "linux" } }),
+    },
+    {
+      name: "multi os",
+      value: 2.5,
+      unit: "s",
+      extra: typed({ version: 1, benchmarkId: "multi", dimensions: {}, metric: { id: "time" }, environment: { os: "macos" } }),
+    },
+    // Keys named like object internals are ordinary keys, and a literal "-" is a value, not "none".
+    {
+      name: "odd keys",
+      value: 0.7,
+      unit: "s",
+      extra: typed({
+        version: 1,
+        dimensions: { toString: i % 2 ? "-" : "x" },
+        metric: { id: "time" },
+        environment: JSON.parse(`{"__proto__": "p${i < 12 ? 1 : 2}"}`),
+      }),
+    },
     // Recorded twice in one run: the first value counts and the duplicate is reported.
-    ...(i === 9 ? [{ name: "mix int", value: 99, unit: "s", extra: typed({ version: 1, dimensions: { threads: 4, mode: "a,b" }, metric: { id: "time" } }) }] : []),
+    ...(i === 9
+      ? [{ name: "mix int", value: 99, unit: "s", extra: typed({ version: 1, dimensions: { threads: 4, mode: "a,b" }, metric: { id: "time" } }) }]
+      : []),
+  ],
+}));
+
+// A Go suite: throughput in MB/s is higher-is-better even though the tool records times.
+const goRuns = runs.map((run, i) => ({
+  ...run,
+  tool: "go",
+  benches: [
+    { name: "BenchmarkParse - ns/op", value: 1200 - (i >= 16 ? 400 : 0), unit: "ns/op" },
+    { name: "BenchmarkParse - MB/s", value: 100 + (i >= 16 ? 60 : 0), unit: "MB/s" },
   ],
 }));
 
@@ -68,6 +115,7 @@ const data = {
   entries: {
     "Edge cases": runs,
     "Typed edge cases": typedRuns,
+    Go: goRuns,
     "One run": [runs[0]],
   },
 };

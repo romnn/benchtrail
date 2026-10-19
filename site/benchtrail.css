@@ -30,11 +30,11 @@
   --s1: #007aff;
   --s2: #f28a00;
   --s3: #00a9a1;
-  --s4: #ff2d55;
-  --s5: #5856d6;
-  --s6: #d4a000;
-  --s7: #af52de;
-  --s8: #a86a2c;
+  --s4: #af52de;
+  --s5: #d4a000;
+  --s6: #c43dad;
+  --s7: #a86a2c;
+  --s8: #3d8fb8;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
@@ -57,17 +57,17 @@
     --better-text: #30d158;
     --noise: #3a3a3c;
     --shadow: rgba(0, 0, 0, 0.5);
-    --worse-wash: rgba(255, 69, 58, 0.12);
-    --better-wash: rgba(48, 209, 88, 0.1);
+    --worse-wash: rgba(255, 69, 58, 0.08);
+    --better-wash: rgba(48, 209, 88, 0.07);
     --mark: rgba(10, 132, 255, 0.3);
     --s1: #0a84ff;
     --s2: #d67800;
     --s3: #139e96;
-    --s4: #ff375f;
-    --s5: #6a68ee;
-    --s6: #b38a00;
-    --s7: #bf5af2;
-    --s8: #b87838;
+    --s4: #bf5af2;
+    --s5: #b38a00;
+    --s6: #cc4fb8;
+    --s7: #b87838;
+    --s8: #3f9fcf;
   }
 }
 
@@ -88,17 +88,17 @@
   --better-text: #30d158;
   --noise: #3a3a3c;
   --shadow: rgba(0, 0, 0, 0.5);
-  --worse-wash: rgba(255, 69, 58, 0.12);
-  --better-wash: rgba(48, 209, 88, 0.1);
+  --worse-wash: rgba(255, 69, 58, 0.08);
+  --better-wash: rgba(48, 209, 88, 0.07);
   --mark: rgba(10, 132, 255, 0.3);
   --s1: #0a84ff;
   --s2: #d67800;
   --s3: #139e96;
-  --s4: #ff375f;
-  --s5: #6a68ee;
-  --s6: #b38a00;
-  --s7: #bf5af2;
-  --s8: #b87838;
+  --s4: #bf5af2;
+  --s5: #b38a00;
+  --s6: #cc4fb8;
+  --s7: #b87838;
+  --s8: #3f9fcf;
 }
 
 *,
@@ -109,6 +109,7 @@
 
 /* Layout rules below set display, which would otherwise override the hidden attribute. */
 [hidden] {
+  /* biome-ignore lint/complexity/noImportantStyles: layout rules below set display, which must not override the hidden attribute. */
   display: none !important;
 }
 
@@ -116,7 +117,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 14px/1.55 var(--font);
+  font: 14px / 1.55 var(--font);
   letter-spacing: -0.003em;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
@@ -181,10 +182,6 @@ button {
   letter-spacing: -0.015em;
 }
 
-.top .theme {
-  margin-left: auto;
-}
-
 .top h1 a {
   text-decoration: none;
 }
@@ -198,48 +195,102 @@ button {
   color: var(--muted);
 }
 
-.theme {
-  color: var(--muted);
-  font-size: 13px;
+/* Settings: a gear in the header over a panel of display choices */
+
+.settings {
+  position: relative;
+  margin-left: auto;
 }
 
-.theme:hover {
+.icon-button {
+  display: inline-flex;
+  padding: 6px;
+  margin: -6px;
+  border-radius: 6px;
+  color: var(--muted);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.icon-button:hover,
+.icon-button[aria-expanded="true"] {
+  background: var(--hover);
   color: var(--ink);
+}
+
+.icon-button .icon {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.4;
+}
+
+/* The panel hangs from the gear's right edge and opens toward the left, inside the page. */
+.settings .settings-panel {
+  right: -6px;
+  left: auto;
+  display: grid;
+  gap: 12px;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 32px));
+  max-height: none;
+  padding: 16px 18px;
+}
+
+.settings-panel[hidden] {
+  display: none;
+}
+
+.setting {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 16px;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
 }
 
 .suites {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 28px;
-  margin-top: 20px;
-}
-
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px 32px;
   margin-top: 16px;
 }
 
-.filters,
-.options {
+.controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px 32px;
+  margin-top: 14px;
+}
+
+.filters {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 12px 40px;
 }
 
-.options {
-  margin-top: 14px;
+/* A filter keeps its label beside its values; the values wrap among themselves. */
+.filter {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 6px 18px;
+  min-width: 0;
 }
 
-.filter {
+.chips {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px 18px;
+  min-width: 0;
 }
 
 .filter-label {
@@ -264,20 +315,46 @@ button {
   color: var(--ink);
 }
 
-.option[aria-checked="true"],
-.option[aria-selected="true"] {
-  font-weight: 600;
+/* Selection never changes weight, so choosing an option never shifts its neighbours. */
+.option[role="radio"][aria-checked="true"] {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 5px;
 }
 
 .suites .option {
+  padding-bottom: 6px;
   font-size: 15px;
+}
+
+.suites .option[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+
+.sections .option {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.sections .option[aria-selected="true"] {
+  background: var(--hover);
+}
+
+/* A hidden value keeps its place but fades, with a hollow key. */
+.filters .option[aria-pressed="false"] {
+  opacity: 0.45;
+}
+
+.filters .option[aria-pressed="false"]:hover {
+  color: var(--muted);
 }
 
 .sections {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 24px;
-  margin-top: 10px;
+  gap: 6px 8px;
+  margin: 10px 0 0 -8px;
 }
 
 .line-key {
@@ -299,8 +376,78 @@ button {
   background: repeating-linear-gradient(90deg, var(--key) 0 2px, transparent 2px 4px);
 }
 
-.option[aria-pressed="false"] .line-key {
-  opacity: 0.25;
+.filters .option[aria-pressed="false"] .line-key {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--key);
+}
+
+/* Disclosures and quiet actions: text with a faint rounded fill on hover, offset by their own
+   padding so their text still lines up with the column. */
+.disclosure,
+.more,
+.charts-more,
+.changes-more,
+.readout-more,
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px -8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.disclosure:hover:not(:disabled),
+.more:hover,
+.charts-more:hover,
+.changes-more:hover,
+.readout-more:hover,
+.menu-button:hover,
+.menu-button[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.disclosure .toggle-icon {
+  width: 11px;
+  height: 11px;
+  color: var(--muted);
+}
+
+/* A full-width band that opens a whole part of the page, or loads more of it, with its label
+   centred; a faint fill on hover says it can be pressed. */
+.wide-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.wide-toggle:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.wide-toggle .toggle-icon {
+  width: 11px;
+  height: 11px;
+}
+
+#history .wide-toggle {
+  margin-top: 16px;
+  border-bottom: 0;
 }
 
 /* Filter menus: a summary button over a panel of checkboxes */
@@ -388,8 +535,8 @@ button {
 
 main {
   display: grid;
-  gap: 72px;
-  margin-top: 36px;
+  gap: 48px;
+  margin-top: 28px;
 }
 
 .trail-chart {
@@ -399,7 +546,7 @@ main {
 .charts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
-  gap: 64px 64px;
+  gap: 56px 48px;
 }
 
 .chart-card {
@@ -419,16 +566,40 @@ main {
 }
 
 .chart {
+  position: relative;
   height: 260px;
   margin-top: 14px;
 }
 
-/* Readout under each chart: one row per line, at the hovered or selected run. Fixed column
-   widths and tabular digits keep every row in place while the numbers change. */
+.chart,
+.trail-chart {
+  position: relative;
+  touch-action: pan-y;
+}
+
+.drag-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  opacity: 0.08;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* ECharts sets the cursor inline on its root as the pointer crosses elements; every point of a
+   plot does the same thing on click, so the cursor stays a crosshair throughout. */
+.chart > div {
+  /* biome-ignore lint/complexity/noImportantStyles: ECharts sets the cursor inline, which only an important rule overrides. */
+  cursor: crosshair !important;
+}
+
+/* Readout under each chart: one row per line, at the hovered or selected run.
+   Fixed column widths and tabular digits keep every row in place while the numbers change. */
 
 .readout-table {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 8px;
   table-layout: fixed;
   font-size: 13px;
 }
@@ -477,6 +648,11 @@ main {
   padding-right: 8px;
 }
 
+.multiples .readout-table td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 .readout-more {
   margin-top: 8px;
   padding-left: 8px;
@@ -492,7 +668,7 @@ main {
 
 .charts.is-faceted {
   grid-template-columns: 1fr;
-  gap: 72px;
+  gap: 56px;
 }
 
 .metric-group h2 {
@@ -532,7 +708,7 @@ main {
 
 .charts-area {
   display: grid;
-  gap: 32px;
+  gap: 24px;
 }
 
 .run-bar {
@@ -542,7 +718,26 @@ main {
   margin: 0 -12px;
   padding: 12px 12px 10px;
   background: var(--bg);
+}
+
+/* The bar's background bleeds past the column so lines scroll cleanly under it, but its rule
+   stays on the column edges. */
+.run-bar::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
   border-bottom: 1px solid var(--rule);
+}
+
+.run-bar.is-preview .run-subject {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.run-bar.is-preview .sha {
+  opacity: 0.6;
 }
 
 .run-head {
@@ -554,6 +749,8 @@ main {
 }
 
 .run-head .step {
+  padding: 10px 6px;
+  margin: -10px -4px;
   color: var(--muted);
   font-size: 15px;
 }
@@ -592,10 +789,6 @@ main {
   min-width: 0;
 }
 
-.run-bar .more-toggle {
-  font-size: 13px;
-}
-
 .run-facts {
   overflow: hidden;
   margin-top: 2px;
@@ -625,15 +818,7 @@ main {
 .message-head {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
-}
-
-.message-subject {
-  margin-top: 6px;
-  font-size: 17px;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
-  overflow-wrap: anywhere;
+  font-size: 13px;
 }
 
 .run-body {
@@ -644,10 +829,22 @@ main {
   overflow-wrap: anywhere;
 }
 
-.run-extra {
-  margin: 12px 0 0;
-  color: var(--muted);
+.run-facts-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 14px 0 0;
   font-size: 13px;
+}
+
+.run-facts-list dt {
+  color: var(--muted);
+}
+
+.run-facts-list dd {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
 
 /* Changes: the latest runs that regressed or improved */
@@ -664,15 +861,8 @@ main {
   cursor: default;
 }
 
-.changes-toggle .toggle-icon {
-  align-self: center;
-  width: 12px;
-  height: 12px;
-  margin-right: -8px;
-  color: var(--muted);
-}
-
 .changes-title {
+  color: var(--ink);
   font-size: 15px;
   font-weight: 600;
 }
@@ -697,17 +887,36 @@ main {
 }
 
 .change-run {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 24px;
+  grid-template-columns: 7ch minmax(0, 1fr) minmax(0, max-content) auto;
+  align-items: baseline;
+  column-gap: 16px;
   margin: 0 -12px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-radius: 8px;
   cursor: pointer;
 }
 
-.change-run + .change-run {
+.change-run .lead .change {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.change-run + .change-run::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 12px;
+  left: 12px;
   border-top: 1px solid var(--grid);
+}
+
+.change-run:hover::before,
+.change-run[aria-selected="true"]::before,
+.change-run:hover + .change-run::before,
+.change-run[aria-selected="true"] + .change-run::before {
+  border-top-color: transparent;
 }
 
 .change-run:hover,
@@ -716,8 +925,10 @@ main {
 }
 
 .change-run .subject {
+  overflow: hidden;
   font-weight: 500;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .change-run .when {
@@ -725,8 +936,25 @@ main {
   font-size: 12px;
 }
 
+.change-run .tentative {
+  margin-right: 10px;
+  color: var(--ink-2);
+}
+
 .change-run .moves {
-  grid-column: 1 / -1;
+  flex-wrap: nowrap;
+  max-width: 34vw;
+  overflow: hidden;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.change-run .moves .move {
+  white-space: nowrap;
+}
+
+.change-run .moves .move:first-child .change {
+  display: none;
 }
 
 .moves {
@@ -740,7 +968,8 @@ main {
   overflow-wrap: anywhere;
 }
 
-.history-table td.moves-cell {
+.history-table td.moves-cell,
+.history-table th:last-child:nth-child(2) {
   white-space: normal;
   text-align: left;
 }
@@ -767,7 +996,7 @@ main {
 
 .overview {
   display: grid;
-  gap: 20px;
+  gap: 12px;
 }
 
 /* Grid items default to their content's width, and a drawn chart would then hold its grid open
@@ -781,7 +1010,7 @@ main > *,
 }
 
 .changes-more {
-  margin-top: 8px;
+  margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -943,10 +1172,33 @@ mark {
   display: block;
   margin-top: 2px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
-.more {
+@media (min-width: 960px) {
+  .row-meta {
+    display: inline-block;
+    margin: 0 0 0 10px;
+    white-space: nowrap;
+  }
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.check input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.more,
+.charts-more {
+  justify-self: start;
   margin-top: 16px;
   color: var(--muted);
 }
@@ -992,8 +1244,7 @@ mark {
     margin-top: 24px;
   }
 
-  .filters,
-  .options {
+  .filters {
     gap: 10px 20px;
   }
 
@@ -1034,13 +1285,169 @@ mark {
     padding-bottom: 6px;
   }
 
-  .tally {
+  .tally .word {
     display: none;
+  }
+
+  main {
+    gap: 40px;
+  }
+
+  .change-run {
+    grid-template-columns: 7ch minmax(0, 1fr);
+    row-gap: 2px;
+  }
+
+  .change-run .subject {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .change-run .when,
+  .change-run .moves {
+    grid-column: 2;
+    max-width: none;
+  }
+
+  .change-run .moves {
+    flex-wrap: wrap;
+  }
+
+  .change-run,
+  .run-bar {
+    margin: 0 -8px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .run-bar::after {
+    right: 8px;
+    left: 8px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * {
+    /* biome-ignore lint/complexity/noImportantStyles: a reduced-motion preference must win over every component's transition. */
     transition: none !important;
   }
+}
+
+/* Movers: a ranked table of every line, for suites too large to chart at once */
+
+.layout {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+}
+
+.layout-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.charts.is-movers {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.movers-table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.movers-table col.spark {
+  width: 140px;
+}
+
+.movers-table col.num {
+  width: 8em;
+}
+
+.movers-table tbody tr {
+  cursor: pointer;
+}
+
+.movers-table tbody tr:hover td {
+  background: var(--hover);
+}
+
+.movers-table td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.movers-table .metric {
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+.movers-table .shifts {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sparkline {
+  display: block;
+  width: 120px;
+  height: 24px;
+  margin-left: auto;
+  fill: none;
+  stroke: var(--axis);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
+
+.sparkline.worse {
+  stroke: var(--worse);
+}
+
+.sparkline.better {
+  stroke: var(--better);
+}
+
+@media (max-width: 720px) {
+  .movers-table col.spark,
+  .movers-table td.spark-cell,
+  .movers-table thead th:nth-child(2) {
+    display: none;
+  }
+
+  .movers-table col.spark {
+    width: 0;
+  }
+
+  .movers-table col.num {
+    width: 5.5em;
+  }
+
+  .movers-table .shifts {
+    display: none;
+  }
+}
+
+/* A quiet notice pinned to the bottom of the window after an unexpected error. */
+.failure {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 10px 16px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--shadow);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.failure .disclosure {
+  margin: 0;
+  color: var(--accent);
 }

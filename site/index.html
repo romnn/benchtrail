@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Benchmarks</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 12l4-4 3 3 7-8' fill='none' stroke='%232a78d6' stroke-width='2'/%3E%3C/svg%3E" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 12l4-4 3 3 7-8' fill='none' stroke='%232a78d6' stroke-width='2'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="benchtrail.css" />
     <!-- Apply a stored theme before first paint, so a dark-mode reader never sees a light flash. -->
     <script>
@@ -23,8 +26,10 @@
     <!--
       Page settings, all optional:
       - "title": heading text; defaults to the repository name from the data.
-      - "dataUrl": the history script; a same-origin `?data=` query parameter overrides it.
-      - "threshold": relative change that counts as a regression or improvement.
+      - "dataUrl": the history script; a `?data=` query parameter naming a same-origin `.js` path
+        overrides it.
+      - "threshold": the smallest relative change that can count as a regression or improvement;
+        a shift must also stand out from the benchmark's own noise.
 
       These apply to every suite at the top level, or to one suite under "suites": { "<name>": { … } }:
       - "names": regex whose named groups read dimensions out of an untyped benchmark name; a group
@@ -34,6 +39,7 @@
       - "dimensions": by dimension name, { "label", "order" }.
       - "colorBy", "dashBy": the dimension that colors or dashes the lines by default.
       - "ignoreEnvironment": environment names whose changes still allow comparing runs.
+      - "smoothing": the default rolling-median window in runs, 0 (off), 5, 11, or 21.
     -->
     <script id="benchtrail-config" type="application/json">
       {
@@ -47,67 +53,82 @@
     <div class="page">
       <header>
         <div class="top">
-          <h1><a id="project-link">Benchmarks</a></h1>
+          <h1><a id="project-link" href="./">Benchmarks</a></h1>
           <p id="summary" class="meta"></p>
-          <button type="button" id="theme" class="theme">Theme: auto</button>
+          <div class="settings">
+            <button type="button" id="settings-toggle" class="icon-button" aria-label="Settings" aria-expanded="false" aria-controls="settings"></button>
+            <section id="settings" class="menu-panel settings-panel" aria-label="Settings" hidden>
+              <div class="setting" role="radiogroup" aria-labelledby="theme-label">
+                <span class="filter-label" id="theme-label">Theme</span>
+                <span id="theme" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="range-label">
+                <span class="filter-label" id="range-label">Runs</span>
+                <span id="range" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="smooth-label">
+                <span class="filter-label" id="smooth-label">Smoothing</span>
+                <span id="smooth" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="scale-label">
+                <span class="filter-label" id="scale-label">Values</span>
+                <span id="scale" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="axis-label">
+                <span class="filter-label" id="axis-label">X axis</span>
+                <span id="axis" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="readout-label">
+                <span class="filter-label" id="readout-label">Readout</span>
+                <span id="readout" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="color-label" id="color-group">
+                <span class="filter-label" id="color-label">Color</span>
+                <span id="color" class="choices"></span>
+              </div>
+              <div class="setting" role="radiogroup" aria-labelledby="dash-label" id="dash-group">
+                <span class="filter-label" id="dash-label">Line style</span>
+                <span id="dash" class="choices"></span>
+              </div>
+            </section>
+          </div>
         </div>
-        <nav id="suites" class="suites" role="tablist" aria-label="Benchmark suites" hidden></nav>
-        <nav id="sections" class="sections" role="tablist" aria-label="Benchmark groups" hidden></nav>
+        <div id="suites" class="suites" role="tablist" aria-label="Benchmark suites" hidden></div>
+        <div id="sections" class="sections" role="tablist" aria-label="Benchmark groups" hidden></div>
         <div id="controls" class="controls" hidden>
           <div id="filters" class="filters"></div>
-          <button type="button" id="options-toggle" class="option" aria-expanded="false" aria-controls="options">Options</button>
-        </div>
-        <div id="options" class="options" hidden>
-          <div class="filter" role="radiogroup" aria-labelledby="range-label">
-            <span class="filter-label" id="range-label">Runs</span>
-            <span id="range" class="filter"></span>
-          </div>
-          <div class="filter" role="radiogroup" aria-labelledby="scale-label">
-            <span class="filter-label" id="scale-label">Values</span>
-            <span id="scale" class="filter"></span>
-          </div>
-          <div class="filter" role="radiogroup" aria-labelledby="axis-label">
-            <span class="filter-label" id="axis-label">X axis</span>
-            <span id="axis" class="filter"></span>
-          </div>
-          <div class="filter" role="radiogroup" aria-labelledby="color-label" id="color-group">
-            <span class="filter-label" id="color-label">Color</span>
-            <span id="color" class="filter"></span>
-          </div>
-          <div class="filter" role="radiogroup" aria-labelledby="dash-label" id="dash-group">
-            <span class="filter-label" id="dash-label">Line style</span>
-            <span id="dash" class="filter"></span>
-          </div>
         </div>
       </header>
 
       <main id="main" hidden>
         <div class="overview">
-          <div id="trail-chart" class="trail-chart" role="img" aria-label="Largest change per run"></div>
+          <div id="trail-chart" class="trail-chart" role="img" aria-label="Regressions and improvements per run"></div>
           <section id="changes" class="changes" aria-label="Recent changes"></section>
         </div>
         <div class="charts-area">
           <div id="run-bar" class="run-bar" aria-live="polite"></div>
+          <div id="layout" class="layout" role="radiogroup" aria-label="Show as" hidden></div>
           <section id="charts" class="charts" aria-label="Charts"></section>
         </div>
         <section id="selected" class="message" aria-label="Selected commit"></section>
-        <section>
-          <div class="history-head">
-            <button type="button" id="list-toggle" class="option" aria-expanded="false" aria-controls="history">Show runs</button>
-            <input id="search" class="search" type="search" placeholder="Search runs" aria-label="Search runs by commit, message, or author" hidden />
-            <button type="button" id="only-changes" class="option" aria-pressed="false" hidden></button>
-          </div>
+        <section class="runs">
+          <button type="button" id="list-toggle" class="wide-toggle" aria-expanded="false" aria-controls="history">All runs</button>
           <div id="history" hidden>
+            <div class="history-head">
+              <input id="search" class="search" type="search" placeholder="Search runs" aria-label="Search runs by commit, message, or author" />
+              <label id="only-changes-label" class="check"><input type="checkbox" id="only-changes" /> Only runs with a regression or improvement</label>
+            </div>
             <div class="table-wrap">
               <table id="history-table" class="history-table"></table>
             </div>
-            <button type="button" id="more" class="more" hidden></button>
+            <button type="button" id="more" class="wide-toggle" hidden></button>
           </div>
         </section>
         <section id="notes" class="notes" aria-label="Problems reading the history" hidden></section>
       </main>
 
       <div id="problem" class="problem" role="alert" hidden></div>
+      <div id="failure" class="failure" role="alert" hidden></div>
     </div>
   </body>
 </html>
