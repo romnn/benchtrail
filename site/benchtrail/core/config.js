@@ -199,7 +199,7 @@ export function suiteSettings(config, name) {
 }
 
 /**
- * Named entries with a suite's own over the top-level ones, field by field.
+ * Merges named entries field by field, with the suite's own values over the top-level ones.
  * @template {object} T
  * @param {Map<string, T> | undefined} shared
  * @param {Map<string, T> | undefined} own

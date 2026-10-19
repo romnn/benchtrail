@@ -42,6 +42,8 @@ deploy:
 
 The Pages branch keeps only the history, and every deploy installs the dashboard of the pinned
 release.
+Deploys run one at a time in the `benchtrail-pages` concurrency group, so the calling workflow must
+not hold that group itself.
 A deploy from Actions is also what publishes a push made with `GITHUB_TOKEN`, which does not start
 a branch-based Pages build.
 

@@ -28,8 +28,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # A deploy that has started finishes, so the site never ends between two histories.
+    # The group has its own name, since a caller that held the group GitHub's Pages template uses
+    # would wait on this job forever.
     concurrency:
-      group: pages
+      group: benchtrail-pages
       cancel-in-progress: false
     permissions:
       contents: read
