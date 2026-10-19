@@ -16,14 +16,15 @@ ECharts loads from jsDelivr.
 
 ## Use it
 
-github-action-benchmark writes `data.js` into its `benchmark-data-dir-path` (`dev/bench` by
-default) on the Pages branch, and only creates an `index.html` there when none exists.
-benchtrail goes into that directory, beside the history.
+github-action-benchmark records the history as `data.js` in its `benchmark-data-dir-path`
+(`dev/bench` by default) on its `gh-pages-branch` (`gh-pages` by default).
+With GitHub Actions, that branch is only where the history is stored: benchtrail reads the history
+from it and installs the dashboard into the site a workflow deploys.
 
-### With GitHub Actions
+### A site of its own
 
-benchtrail's Pages workflow checks out the Pages branch, installs the dashboard beside the
-history, and deploys the result to GitHub Pages, which must be set to publish from Actions.
+benchtrail's Pages workflow deploys the dashboard as a GitHub Pages site, which must be set to
+publish from Actions.
 Call it from a job that runs after the benchmarks:
 
 ```yaml
@@ -35,45 +36,122 @@ deploy:
     id-token: write
   uses: romnn/benchtrail/.github/workflows/pages.yaml@v0.2.0
   with:
-    path: dev/bench
+    benchmark-data-dir-path: dev/bench
     settings: |
       { "title": "My project benchmarks" }
 ```
 
-The Pages branch keeps only the history, and every deploy installs the dashboard of the pinned
-release.
+| Input                     | Default     | Meaning                                                                                    |
+| ------------------------- | ----------- | ------------------------------------------------------------------------------------------ |
+| `gh-pages-branch`         | `gh-pages`  | The branch github-action-benchmark records the history on.                                 |
+| `benchmark-data-dir-path` | `dev/bench` | The history's directory on that branch.                                                    |
+| `path`                    |             | Where the dashboard sits in the site, such as `bench`, or `.`; the history's directory by default. |
+| `settings`                |             | The [settings](#settings) as a JSON object.                                                |
+| `allow-missing-history`   | `false`     | Whether to deploy before the branch holds a history, rather than failing.                  |
+
 Deploys run one at a time in the `benchtrail-pages` concurrency group, so the calling workflow must
 not hold that group itself.
-A deploy from Actions is also what publishes a push made with `GITHUB_TOKEN`, which does not start
-a branch-based Pages build.
 
-| Input      | Default     | Meaning                                                                                                         |
-| ---------- | ----------- | --------------------------------------------------------------------------------------------------------------- |
-| `branch`   | `gh-pages`  | The branch github-action-benchmark commits the history to.                                                      |
-| `path`     | `dev/bench` | The directory on that branch that holds the history, as `benchmark-data-dir-path` names it.                     |
-| `settings` |             | The [settings](#settings) as a JSON object, written to `benchtrail.json`. Without it, the directory keeps its own. |
+### Beside documentation
 
-Settings that break a rule fail the deploy before anything is published, and a directory without
-`data.js` is deployed with a warning.
-Pin an exact release: before 1.0, a minor release may change the settings.
-Dependabot or Renovate can keep the pin current.
-
-For any other site, such as one a documentation build assembles, the `romnn/benchtrail@v0.2.0`
-action installs the dashboard into a directory and leaves publishing to the workflow.
-It takes the same `path` and `settings`; the dashboard's files are replaced there, and the history
-and any other file stay.
+A repository has one Pages site, so a site that also holds documentation deploys the dashboard
+from its own build, with the benchtrail action.
+For a Hugo site in `docs/`, the action installs the dashboard into Hugo's output after the build,
+since a build may clean that directory:
 
 ```yaml
-- uses: romnn/benchtrail@v0.2.0
-  with:
-    path: site/static/bench
-    settings: |
-      { "title": "My project benchmarks" }
+# .github/workflows/pages.yaml
+name: pages
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", ".github/workflows/pages.yaml"]
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # One deploy at a time, from checkout to publication, so an older run never publishes last.
+    concurrency:
+      group: site
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # The site as main holds it now, whichever run asked for the deploy.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: pages
+        uses: actions/configure-pages@v6
+      - name: Build the documentation
+        run: hugo --minify --source docs --baseURL "${{ steps.pages.outputs.base_url }}/"
+      - uses: romnn/benchtrail@v0.2.0
+        with:
+          path: docs/public/bench
+          benchmark-data-dir-path: dev/bench
+          settings: |
+            {
+              "title": "My project benchmarks",
+              "links": [{ "label": "Documentation", "url": "../" }]
+            }
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/public
+      - id: deployment
+        uses: actions/deploy-pages@v5
 ```
+
+The benchmark workflow then deploys the site after each run it records, so the dashboard shows the
+new history:
+
+```yaml
+deploy:
+  needs: benchmark
+  permissions:
+    contents: read
+    pages: write
+    id-token: write
+  uses: ./.github/workflows/pages.yaml
+```
+
+A menu entry links the documentation to the dashboard.
+Hugo prefixes an absolute menu address with the site's base path, so `/bench/` works on a project
+site:
+
+```toml
+[[menu.after]]
+name = "Benchmarks"
+url = "/bench/"
+```
+
+| Input                     | Default                | Meaning                                                                                       |
+| ------------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
+| `path`                    |                        | The directory to install the dashboard into. Its files and the history are replaced there; any other file stays. |
+| `settings`                |                        | The [settings](#settings) as a JSON object, written to `benchtrail.json`. Without it, the directory keeps its own. |
+| `gh-pages-branch`         | `gh-pages`             | The branch github-action-benchmark records the history on.                                    |
+| `benchmark-data-dir-path` | `dev/bench`            | The history's directory on that branch.                                                       |
+| `allow-missing-history`   | `false`                | Whether to install before the branch holds a history, rather than failing.                    |
+| `fetch-history`           | `true`                 | With `false`, the dashboard shows the `data.js` the directory already holds.                  |
+| `repository`              | the current repository | The repository that holds the branch, as `owner/name`.                                        |
+| `token`                   | `github.token`         | A token that can read that repository's contents.                                             |
+
+The action reads the history through the GitHub REST API at the branch's latest commit, so the job
+needs no checkout of the branch, only `contents: read`.
+Settings that break a rule fail the step before anything is written, and so does a history that
+cannot be read.
+Pin an exact release: before 1.0, a minor release may change the settings or the inputs.
+Dependabot or Renovate can keep the pin current.
 
 ### By hand
 
-Put benchtrail's files into the directory:
+When the Pages branch is served as it is, put benchtrail's files beside the history there:
 
 ```sh
 git switch gh-pages

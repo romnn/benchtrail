@@ -26,7 +26,7 @@ jobs:
         run: task test
 
   # Runs the action as a workflow uses it, on each runner's own Node and without the development
-  # dependencies, into a directory that holds a history.
+  # dependencies: into a directory that holds a history, and with the history read from a branch.
   action:
     strategy:
       fail-fast: false
@@ -44,8 +44,14 @@ jobs:
       - uses: ./
         with:
           path: _site/bench
+          fetch-history: false
           settings: |
             { "title": "Sample benchmarks", "smoothing": 5 }
+      # This repository records no history, so the read asks GitHub and finds none.
+      - uses: ./
+        with:
+          path: _site/remote
+          allow-missing-history: true
       - name: Check the installed dashboard
         shell: bash
         run: |
@@ -53,3 +59,4 @@ jobs:
           test -f index.html && test -f benchtrail.js && test -f benchtrail/core/config.js
           grep -q '"title": "Sample benchmarks"' benchtrail.json
           grep -q BENCHMARK_DATA data.js
+          test -f ../remote/index.html && test ! -e ../remote/data.js

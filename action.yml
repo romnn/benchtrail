@@ -1,5 +1,5 @@
 name: benchtrail
-description: Install the benchtrail dashboard beside a github-action-benchmark history.
+description: Install the benchtrail dashboard and the github-action-benchmark history it shows into a site.
 author: romnn
 branding:
   icon: activity
@@ -8,16 +8,38 @@ branding:
 inputs:
   path:
     description: >-
-      The directory that holds the history, as github-action-benchmark's `benchmark-data-dir-path`
-      names it.
-      The dashboard's files are replaced there; the history and any other file stay.
-    default: dev/bench
+      The directory to install the dashboard into, such as `_site/bench` or a docs build's
+      `public/bench`.
+      The dashboard's files and the history are replaced there; any other file stays.
+    required: true
   settings:
     description: >-
       The page's settings as a JSON object, written to `benchtrail.json` in that directory.
       Settings that break a rule fail the step before anything is written.
       Without it, the directory keeps the settings it has.
     default: ""
+  fetch-history:
+    description: >-
+      Whether to read the history from its storage branch.
+      With `false`, the dashboard shows the `data.js` the directory already holds.
+    default: "true"
+  gh-pages-branch:
+    description: The branch github-action-benchmark records the history on, as its own input names it.
+    default: gh-pages
+  benchmark-data-dir-path:
+    description: The history's directory on that branch, as github-action-benchmark's input names it.
+    default: dev/bench
+  allow-missing-history:
+    description: >-
+      Whether to install the dashboard when the branch holds no history yet, such as before the
+      first benchmark run, rather than failing the step.
+    default: "false"
+  repository:
+    description: The repository that holds the branch, as `owner/name`.
+    default: ${{ github.repository }}
+  token:
+    description: A token that can read that repository's contents.
+    default: ${{ github.token }}
 
 runs:
   using: node24

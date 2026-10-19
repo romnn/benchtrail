@@ -1,5 +1,4 @@
-// Installs the dashboard into a directory of a static site, beside the history that
-// github-action-benchmark records there.
+// Installs the dashboard into a directory of a static site, with the history it shows.
 
 import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -23,13 +22,14 @@ export const SETTINGS_FILE = "benchtrail.json";
 
 /**
  * Installs the dashboard into `dir`, with `settings` as its settings, or with the ones the
- * directory already holds when `settings` is null.
+ * directory already holds when `settings` is null, and with `history` as its `data.js`, or with
+ * the one the directory already holds when `history` is null.
  * Settings are checked first, so a directory never ends up with a page and settings that break a
  * rule.
- * @param {{ dir: string, settings: string | null }} options
+ * @param {{ dir: string, settings: string | null, history?: string | null }} options
  * @returns {Promise<Outcome>}
  */
-export async function install({ dir, settings }) {
+export async function install({ dir, settings, history = null }) {
   const settingsPath = path.join(dir, SETTINGS_FILE);
   const existing = await readIfPresent(settingsPath);
   const text = settings ?? existing;
@@ -58,13 +58,13 @@ export async function install({ dir, settings }) {
   // Write the settings, or an empty set when there are none, so the page finds a file either way.
   if (settings !== null) await writeFile(settingsPath, `${JSON.stringify(raw, null, 2)}\n`);
   else if (existing === null) await writeFile(settingsPath, "{}\n");
+  // The history is written as received; the page loads it as a script, and nothing here runs it.
+  if (history !== null) await writeFile(path.join(dir, "data.js"), history);
 
   /** @type {string[]} */
   const warnings = [];
   if (config.dataUrl === null && !(await present(path.join(dir, "data.js")))) {
-    warnings.push(
-      `${dir} holds no data.js, so the dashboard has no history to show until github-action-benchmark records one there; check that its benchmark-data-dir-path names this directory.`,
-    );
+    warnings.push(`${dir} holds no data.js, so the dashboard has no history to show.`);
   }
   return { problems: [], warnings };
 }

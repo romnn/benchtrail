@@ -1,23 +1,33 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/refs/heads/master/src/schemas/json/github-workflow.json
 name: pages
 
-# Deploys a github-action-benchmark history to GitHub Pages, with the dashboard installed beside it.
+# Deploys a github-action-benchmark history to GitHub Pages as a site of its own, for a repository
+# whose Pages site is nothing else.
 # A workflow calls it from a job that runs after its benchmarks, and Pages publishes from Actions.
+# A site that also holds documentation runs the benchtrail action in its own build instead.
 on:
   workflow_call:
     inputs:
-      branch:
-        description: The branch github-action-benchmark commits the history to.
+      gh-pages-branch:
+        description: The branch github-action-benchmark records the history on.
         type: string
         default: gh-pages
-      path:
-        description: The directory on that branch that holds the history, as `benchmark-data-dir-path` names it.
+      benchmark-data-dir-path:
+        description: The history's directory on that branch.
         type: string
         default: dev/bench
-      settings:
-        description: The page's settings as a JSON object; without them, the directory keeps the settings it has.
+      path:
+        description: Where the dashboard sits in the site, such as `bench`, or `.` for its root; the history's directory by default.
         type: string
         default: ""
+      settings:
+        description: The page's settings as a JSON object.
+        type: string
+        default: ""
+      allow-missing-history:
+        description: Whether to deploy when the branch holds no history yet, rather than failing.
+        type: boolean
+        default: false
     outputs:
       page_url:
         description: The address of the deployed site.
@@ -27,7 +37,8 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # A deploy that has started finishes, so the site never ends between two histories.
+    # One deploy at a time, from reading the history to publishing it, so the last one to finish
+    # never publishes an older history than one before it.
     # The group has its own name, since a caller that held the group GitHub's Pages template uses
     # would wait on this job forever.
     concurrency:
@@ -43,19 +54,18 @@ jobs:
     outputs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.branch }}
-          persist-credentials: false
       # A called workflow cannot name the release it was called at, so it pins its own release, which
       # the release bump keeps in step.
       - uses: romnn/benchtrail@v0.2.0
         with:
-          path: ${{ inputs.path }}
+          path: _site/${{ inputs.path || inputs.benchmark-data-dir-path }}
+          gh-pages-branch: ${{ inputs.gh-pages-branch }}
+          benchmark-data-dir-path: ${{ inputs.benchmark-data-dir-path }}
           settings: ${{ inputs.settings }}
+          allow-missing-history: ${{ inputs.allow-missing-history }}
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: .
+          path: _site
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5
