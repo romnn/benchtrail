@@ -3,8 +3,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildSuite, readSettings, suiteSettings } from "../site/benchtrail/history.js";
-import { urlText } from "../site/benchtrail/identity.js";
+import { buildSuite, readSettings, suiteSettings } from "../site/benchtrail/core/history.js";
+import { urlText } from "../site/benchtrail/core/identity.js";
 
 // A typed entry as a custom github-action-benchmark tool records it.
 function entry(name, value, payload, unit = "s") {
@@ -117,4 +117,10 @@ test("entries that differ only in their environment are reported as duplicates",
 test("an invalid payload is reported and kept apart from valid histories", () => {
   const s = suite([[entry("future", 1, { version: 2, metric: { id: "time" } }), entry("ok", 1, { metric: { id: "time" } })]]);
   assert.ok([...s.problems.keys()].some((p) => /unsupported version 2/.test(p)));
+});
+
+test("an invalid name pattern is reported, and names are read as they are", () => {
+  const s = suite([[{ name: "parse small", value: 1, unit: "s" }]], { names: "(?<broken" });
+  assert.ok([...s.problems.keys()].some((p) => /name pattern for test is not a valid regular expression/.test(p)));
+  assert.equal(traces(s)[0].dims.benchmark, "parse small");
 });

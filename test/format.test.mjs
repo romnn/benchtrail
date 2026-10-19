@@ -2,7 +2,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changeParts, displayUnit, formatTick, formatValue, parseUnit, unitFactor } from "../site/benchtrail/format.js";
+import { changeParts, displayUnit, formatTick, formatValue } from "../site/benchtrail/core/format.js";
+import { parseUnit, unitFactor } from "../site/benchtrail/core/units.js";
 
 test("units in one family convert into each other, and others stay as recorded", () => {
   // Seconds and milliseconds share the time family; bytes in IEC and SI steps do not mix families.

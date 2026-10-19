@@ -7,12 +7,12 @@
 // Typed entries carry these in `extra` as JSON under a `benchtrail` key; untyped entries fall back
 // to a configured name pattern, or to their name as the only dimension.
 
-import { BASELINE_RUNS, median, relative } from "./benchtrail/detect.js";
+import { BASELINE_RUNS, median, relative } from "./benchtrail/core/detect.js";
+import { displayUnit, formatDate, formatDateTime, formatTick, formatValue, timeFormat } from "./benchtrail/core/format.js";
+import { buildSuite, readSettings, safeUrl, suiteSettings, valueText } from "./benchtrail/core/history.js";
+import { linkPart, MISSING, token } from "./benchtrail/core/identity.js";
+import { compareOrder, unique } from "./benchtrail/core/list.js";
 import { changeElement, h, icon } from "./benchtrail/dom.js";
-import { displayUnit, formatDate, formatDateTime, formatTick, formatValue, timeFormat } from "./benchtrail/format.js";
-import { buildSuite, readSettings, safeUrl, suiteSettings, valueText } from "./benchtrail/history.js";
-import { linkPart, MISSING, token } from "./benchtrail/identity.js";
-import { compareOrder, unique } from "./benchtrail/list.js";
 
 const echarts = window.echarts;
 const PAGE_SIZE = 30;
@@ -375,10 +375,10 @@ function badness(metric, change) {
 // and none where nothing was measured.
 function lineVerdict(line, runIndex) {
   if (valueAt(line, runIndex) === null) return "none";
-  const detected = line.history.verdicts[runIndex];
+  const detected = line.history.shifts[runIndex];
   if (detected) return detected.kind;
   if (changeAt(line, runIndex) === null) return "none";
-  return line.history.baseline[runIndex] === null ? "unjudged" : "noise";
+  return line.history.baselines[runIndex] === null ? "unjudged" : "noise";
 }
 
 // A verdict from a change ratio alone, against the configured threshold, for comparisons that are
@@ -1111,7 +1111,7 @@ function updateReadouts(run) {
       // A row whose run regressed or improved is emphasized, so the lines that moved stand out.
       cells.value.parentElement.dataset.verdict = kind;
       if (state.more) {
-        const base = line.history.baseline[run.index];
+        const base = line.history.baselines[run.index];
         const vsBase = value !== null && base ? relative(value, base) : null;
         cells.spread.textContent = rangeAt(line, run.index) ?? "–";
         cells.median.replaceChildren(changeElement(vsBase, verdict(chart.metric, vsBase)));
@@ -1188,7 +1188,7 @@ function renderMovers(container) {
     const metric = line.history.metric;
     const bad = badness(metric, net);
     const kind = bad === null ? "noise" : bad > config.threshold ? "worse" : bad < -config.threshold ? "better" : "noise";
-    const shifts = inWindow.filter((i) => history.verdicts[i]).length;
+    const shifts = inWindow.filter((i) => history.shifts[i]).length;
     rows.push({ line, net, bad: bad ?? 0, kind, shifts, latest: measured.at(-1) });
   }
   rows.sort((a, b) => b.bad - a.bad);
@@ -2223,7 +2223,7 @@ function tallyView() {
       tally.measured += 1;
       if (kind === "noise") continue;
       tally[kind] += 1;
-      const { shift, tentative } = line.history.verdicts[i];
+      const { shift, tentative } = line.history.shifts[i];
       if (!moves.has(i)) moves.set(i, []);
       moves.get(i).push({ line, change: shift, kind, tentative });
     }

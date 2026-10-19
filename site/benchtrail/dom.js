@@ -1,7 +1,7 @@
 // Page elements built from data: every value reaches the DOM as text or as a checked attribute,
 // never as markup.
 
-import { changeParts } from "./format.js";
+import { changeParts } from "./core/format.js";
 
 // Builds an element; text children become text nodes, so data never reaches the DOM as markup.
 export function h(tag, attrs = {}, ...children) {

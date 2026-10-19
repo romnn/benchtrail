@@ -4,11 +4,160 @@
 // Recorded data is untrusted, so every field is checked here, once, before anything keys by it.
 
 import { detect, relative } from "./detect.js";
-import { FAMILY_LABELS, parseUnit, unitFactor } from "./format.js";
 import { canonical, linkPart, MISSING, token, urlText } from "./identity.js";
 import { countBy, unique } from "./list.js";
+import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
+
+/** @typedef {import("./detect.js").Direction} Direction */
+/** @typedef {import("./detect.js").Shift} Shift */
+/** @typedef {import("./identity.js").Scalar} Scalar */
+/** @typedef {import("./identity.js").Tags} Tags */
+
+/**
+ * The page config's settings for reading runs: the detection threshold, the settings every suite
+ * shares, and each suite's own, still unchecked.
+ * @typedef {{ threshold: number, defaults: Record<string, unknown>, suites: Record<string, unknown> }} PageSettings
+ */
+
+/**
+ * One suite's settings, merged and checked.
+ * @typedef {object} SuiteSettings
+ * @property {RegExp | null} names
+ * @property {unknown} [label]
+ * @property {Record<string, { label?: string, direction?: string, unit?: unknown }>} metrics
+ * @property {Record<string, { label?: unknown, order?: unknown }>} dimensions
+ * @property {unknown} [colorBy]
+ * @property {unknown} [dashBy]
+ * @property {Set<string>} ignoreEnvironment
+ * @property {unknown} [smoothing]
+ * @property {string | null} namesError why the configured name pattern was ignored, if it was
+ */
+
+/**
+ * A recorded run: one commit's benchmark results.
+ * `key` names the run in links: its short SHA, with a suffix for a re-run of the same commit.
+ * @typedef {object} Run
+ * @property {number} index
+ * @property {string} id
+ * @property {string} short
+ * @property {string} key
+ * @property {string} message
+ * @property {string} subject
+ * @property {string} body
+ * @property {string | null} url
+ * @property {string} author
+ * @property {number} date
+ * @property {unknown} tool
+ */
+
+/**
+ * What was measured, keyed by id and unit family.
+ * @typedef {object} Metric
+ * @property {string} key
+ * @property {string} id
+ * @property {string} unit
+ * @property {string | null} rowLabel
+ * @property {Set<Direction>} explicit
+ * @property {Set<Direction>} implied
+ * @property {Direction} direction
+ * @property {string} label
+ * @property {string} slug
+ */
+
+/**
+ * One benchmark measured in one metric, by run.
+ * Each per-run array has one slot per run of the suite; `observed` marks the runs that recorded
+ * the benchmark, with or without a usable value.
+ * @typedef {object} History
+ * @property {string} key
+ * @property {Metric} metric
+ * @property {string | null} benchmarkId
+ * @property {string} name
+ * @property {boolean[]} observed
+ * @property {Array<number | null>} values
+ * @property {Array<string | null>} ranges
+ * @property {Array<string | null>} texts
+ * @property {Array<Tags | null>} dimsAt
+ * @property {Array<Tags | null>} envAt
+ * @property {Array<number | null>} segment
+ * @property {Array<number | null>} change
+ * @property {Array<string[] | null>} boundary
+ * @property {Array<Shift | null>} shifts
+ * @property {Array<number | null>} baselines
+ * @property {Set<string>} keys
+ */
+
+/**
+ * The runs of one history recorded with one set of dimension values.
+ * `own` holds the indices of those runs.
+ * @typedef {object} Trace
+ * @property {History} history
+ * @property {Tags} dims
+ * @property {Set<number>} own
+ * @property {string} key
+ * @property {string} label
+ * @property {string} slug
+ */
+
+/**
+ * A value a dimension takes in a section; `value` is undefined for traces without the dimension.
+ * @typedef {object} DimensionValue
+ * @property {string} token
+ * @property {Scalar | undefined} value
+ * @property {number} index
+ * @property {string} text
+ * @property {string} param
+ */
+
+/**
+ * @typedef {object} Dimension
+ * @property {string} key
+ * @property {string} label
+ * @property {DimensionValue[]} values
+ * @property {Map<string, DimensionValue>} byToken
+ * @property {boolean} varying
+ */
+
+/**
+ * Histories that share dimensions, shown together.
+ * @typedef {object} Section
+ * @property {string} label
+ * @property {string[]} keys
+ * @property {string | null} link
+ * @property {History[]} histories
+ * @property {Trace[]} traces
+ * @property {Dimension[]} dims
+ * @property {Metric[]} metrics
+ * @property {SuiteSettings} settings
+ */
+
+/**
+ * @typedef {object} Suite
+ * @property {string} name
+ * @property {Run[]} runs
+ * @property {Map<string, Metric>} metrics
+ * @property {Section[]} sections
+ * @property {SuiteSettings} settings
+ * @property {Map<string, number>} problems
+ */
+
+/**
+ * An entry's identity and metadata, as read from its name or typed payload.
+ * @typedef {object} Reading
+ * @property {string | null} benchmarkId
+ * @property {Tags} dimensions
+ * @property {string} metricId
+ * @property {string | null} metricLabel
+ * @property {Direction | null} direction
+ * @property {Tags} environment
+ * @property {string | null} [text]
+ */
+
+/** @typedef {Reading & { index: number, entry: Record<string, unknown>, tool: unknown, unit: string }} Observation */
+/** @typedef {(message: string) => void} Note */
 
 // Settings a config may give for every suite at its top level, or for one suite under `suites`.
+/** @type {readonly string[]} */
 const SETTING_KEYS = ["names", "label", "metrics", "dimensions", "colorBy", "dashBy", "ignoreEnvironment", "smoothing"];
 
 // Tools whose values github-action-benchmark treats as "bigger is better"; every other tool
@@ -17,7 +166,12 @@ const BIGGER_IS_BETTER = new Set(["customBiggerIsBetter", "benchmarkjs", "pytest
 
 // The parts of the page config that shape how runs are read: the detection threshold, the
 // settings for every suite, and each suite's own.
+/**
+ * @param {Record<string, unknown>} raw
+ * @returns {PageSettings}
+ */
 export function readSettings(raw) {
+  /** @type {Record<string, unknown>} */
   const defaults = {};
   for (const key of SETTING_KEYS) if (raw[key] !== undefined) defaults[key] = raw[key];
   return {
@@ -30,26 +184,44 @@ export function readSettings(raw) {
 // A suite's own settings override the top-level ones; metric and dimension entries merge by key.
 // `defaults` holds the top-level settings and `suites` each suite's own, as the page config gives
 // them.
+/**
+ * @param {PageSettings} settings
+ * @param {string} name
+ * @returns {SuiteSettings}
+ */
 export function suiteSettings({ defaults, suites }, name) {
-  const own = isPlainObject(suites[name]) ? suites[name] : {};
+  const own = plainObject(suites[name]);
   const merged = { ...defaults, ...own };
-  merged.metrics = { ...plainObject(defaults.metrics), ...plainObject(own.metrics) };
-  merged.dimensions = { ...plainObject(defaults.dimensions), ...plainObject(own.dimensions) };
-  merged.ignoreEnvironment = new Set(Array.isArray(merged.ignoreEnvironment) ? merged.ignoreEnvironment : []);
+  const ignored = merged.ignoreEnvironment;
+  /** @type {RegExp | null} */
   let names = null;
+  /** @type {string | null} */
+  let namesError = null;
   try {
-    if (merged.names) names = new RegExp(merged.names);
-  } catch (error) {
-    console.warn(`benchtrail: ignoring the name pattern for ${name} because it is not a valid regex`, error);
+    if (merged.names) names = new RegExp(String(merged.names));
+  } catch {
+    namesError = `the name pattern for ${name} is not a valid regular expression, so benchmark names are read as they are`;
   }
-  merged.names = names;
-  return merged;
+  return {
+    ...merged,
+    names,
+    namesError,
+    metrics: /** @type {SuiteSettings["metrics"]} */ ({ ...plainObject(defaults.metrics), ...plainObject(own.metrics) }),
+    dimensions: /** @type {SuiteSettings["dimensions"]} */ ({ ...plainObject(defaults.dimensions), ...plainObject(own.dimensions) }),
+    ignoreEnvironment: new Set(Array.isArray(ignored) ? ignored.map(String) : []),
+  };
 }
 
 // Reads one recorded entry into its benchmark identity, dimensions, metric, and environment.
 // The action stores `extra` as a string, so typed metadata arrives as JSON text.
 // Every tag map is a null-prototype object, so a dimension named `toString` or `__proto__` is an
 // ordinary key.
+/**
+ * @param {Record<string, unknown>} entry
+ * @param {SuiteSettings} settings
+ * @param {Note} note
+ * @returns {Reading}
+ */
 function readEntry(entry, settings, note) {
   const name = String(entry.name ?? "");
   const extra = typeof entry.extra === "string" ? entry.extra : null;
@@ -66,7 +238,7 @@ function readEntry(entry, settings, note) {
   if (isPlainObject(parsed) && Object.hasOwn(parsed, "benchtrail")) {
     const typed = readTyped(parsed.benchtrail);
     const text = typeof parsed.text === "string" ? parsed.text : null;
-    if (typed.ok) return { ...typed.value, text };
+    if ("value" in typed) return { ...typed.value, text };
     // A payload that does not validate keeps its raw history, apart from every other history, so a
     // broken producer never merges into or splits a good one.
     note(`${name}: ${typed.error}; it is shown on its own, by name.`);
@@ -84,7 +256,7 @@ function readEntry(entry, settings, note) {
   // Untyped entry, read through the configured name pattern when it matches
   const groups = settings.names?.exec(name)?.groups;
   if (groups) {
-    const { metric = "", ...rest } = groups;
+    const { metric = "", ...rest } = /** @type {Record<string, string | undefined>} */ (groups);
     const dimensions = tags({});
     for (const [key, value] of Object.entries(rest)) if (value !== undefined) dimensions[key] = value;
     return { benchmarkId: null, dimensions, metricId: metric.trim(), metricLabel: null, direction: null, environment: tags({}), text: extra };
@@ -95,6 +267,10 @@ function readEntry(entry, settings, note) {
 // Validates version 1 of the typed payload.
 // Unknown properties are allowed, so later additions stay readable; recognized ones must be
 // valid when present, and an invalid one rejects the whole payload rather than being dropped.
+/**
+ * @param {unknown} payload
+ * @returns {{ ok: true, value: Reading } | { ok: false, error: string }}
+ */
 function readTyped(payload) {
   if (!isPlainObject(payload)) return { ok: false, error: "extra.benchtrail is not an object" };
   if (payload.version !== 1) return { ok: false, error: `extra.benchtrail has unsupported version ${JSON.stringify(payload.version)}` };
@@ -106,7 +282,7 @@ function readTyped(payload) {
   if (!isPlainObject(metric) || typeof metric.id !== "string" || metric.id === "") {
     return { ok: false, error: "extra.benchtrail.metric.id must be a non-empty string" };
   }
-  if (Object.hasOwn(metric, "direction") && !["lower", "higher", "unknown"].includes(metric.direction)) {
+  if (Object.hasOwn(metric, "direction") && !isDirection(metric.direction)) {
     return { ok: false, error: `extra.benchtrail.metric.direction must be "lower", "higher", or "unknown"` };
   }
   if (Object.hasOwn(payload, "benchmarkId") && (typeof payload.benchmarkId !== "string" || payload.benchmarkId === "")) {
@@ -115,40 +291,68 @@ function readTyped(payload) {
   return {
     ok: true,
     value: {
-      benchmarkId: payload.benchmarkId ?? null,
+      benchmarkId: typeof payload.benchmarkId === "string" ? payload.benchmarkId : null,
       dimensions,
       metricId: metric.id,
       metricLabel: typeof metric.label === "string" && metric.label ? metric.label : null,
-      direction: metric.direction ?? null,
+      direction: isDirection(metric.direction) ? metric.direction : null,
       environment,
     },
   };
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Tags | null}
+ */
 function readTags(value) {
   if (!isPlainObject(value)) return null;
   for (const item of Object.values(value)) {
     const scalar = typeof item === "string" || typeof item === "boolean" || (typeof item === "number" && Number.isFinite(item));
     if (!scalar) return null;
   }
-  return tags(value);
+  return tags(/** @type {Tags} */ (value));
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is Direction}
+ */
+function isDirection(value) {
+  return value === "lower" || value === "higher" || value === "unknown";
 }
 
 // A null-prototype copy of a tag map.
+/**
+ * @param {Tags} source
+ * @returns {Tags}
+ */
 function tags(source) {
   return Object.assign(Object.create(null), source);
 }
 
 // Only numbers count; Number() would turn null, "" and false into a real zero.
+/**
+ * @param {unknown} value
+ * @returns {number | null}
+ */
 function numeric(value) {
   const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Record<string, unknown>}
+ */
 function plainObject(value) {
   return isPlainObject(value) ? value : {};
 }
@@ -156,24 +360,40 @@ function plainObject(value) {
 // The direction a tool implies for an entry without a declared one.
 // The custom tools state it outright; the other tools record times and sizes, except that a rate
 // such as MB/s or ops/sec is a throughput, where higher is better.
+/**
+ * @param {unknown} tool
+ * @param {string} unit
+ * @returns {Direction}
+ */
 function impliedDirection(tool, unit) {
   if (tool === "customBiggerIsBetter") return "higher";
   if (tool === "customSmallerIsBetter") return "lower";
-  if (BIGGER_IS_BETTER.has(tool) || /\/\s*(s|sec|secs|second|seconds)$/i.test(unit.trim())) return "higher";
+  if ((typeof tool === "string" && BIGGER_IS_BETTER.has(tool)) || /\/\s*(s|sec|secs|second|seconds)$/i.test(unit.trim())) return "higher";
   return "lower";
 }
 
 // Reads one suite's recorded runs into its metrics, histories, and sections, with each history's
 // segments and detected shifts.
 // `threshold` is the smallest relative change detection may report.
+/**
+ * @param {string} name
+ * @param {readonly unknown[]} rawRuns
+ * @param {SuiteSettings} settings
+ * @param {number} threshold
+ * @returns {Suite}
+ */
 export function buildSuite(name, rawRuns, settings, threshold) {
+  /** @type {Map<string, number>} */
   const problems = new Map();
+  /** @type {Note} */
   const note = (message) => problems.set(message, (problems.get(message) ?? 0) + 1);
-  const valid = rawRuns.filter((raw) => isPlainObject(raw));
+  if (settings.namesError) note(settings.namesError);
+  const valid = rawRuns.filter(isPlainObject);
   if (valid.length < rawRuns.length) note(`${rawRuns.length - valid.length} recorded runs are not objects and are skipped.`);
   const runs = valid.map((raw, index) => normalizeRun(raw, index));
 
   // Read every entry once, before anything is keyed by it.
+  /** @type {Observation[]} */
   const observations = [];
   for (const [index, raw] of valid.entries()) {
     const entries = Array.isArray(raw.benches) ? raw.benches : [];
@@ -188,7 +408,9 @@ export function buildSuite(name, rawRuns, settings, threshold) {
   }
 
   // Group the observations into metrics and histories, in order of first appearance.
+  /** @type {Map<string, Metric>} */
   const metrics = new Map();
+  /** @type {Map<string, History>} */
   const histories = new Map();
   for (const o of observations) {
     const metric = metricFor(metrics, o.metricId, o.unit, settings);
@@ -218,6 +440,9 @@ export function buildSuite(name, rawRuns, settings, threshold) {
         segment: new Array(runs.length).fill(null),
         change: new Array(runs.length).fill(null),
         boundary: new Array(runs.length).fill(null),
+        shifts: [],
+        baselines: [],
+        keys: new Set(),
       };
       histories.set(key, history);
     }
@@ -236,7 +461,7 @@ export function buildSuite(name, rawRuns, settings, threshold) {
     history.name = String(o.entry.name ?? "");
     history.dimsAt[o.index] = o.dimensions;
     history.envAt[o.index] = o.environment;
-    history.texts[o.index] = o.text;
+    history.texts[o.index] = o.text ?? null;
     history.ranges[o.index] = rangeText(o.entry.range, o.unit, o.tool);
     const value = numeric(o.entry.value);
     const scaled = value === null ? null : value * unitFactor(o.unit, metric.unit);
@@ -246,11 +471,14 @@ export function buildSuite(name, rawRuns, settings, threshold) {
   resolveMetrics(metrics, settings, note);
   for (const history of histories.values()) {
     trace(history, settings);
-    detect(history, threshold);
+    const detection = detect({ values: history.values, observed: history.observed, segment: history.segment, direction: history.metric.direction }, threshold);
+    history.shifts = detection.shifts;
+    history.baselines = detection.baselines;
   }
 
   // Runs are named by short commit SHA, with a suffix for re-runs of the same commit, so a link
   // can name each one.
+  /** @type {Map<string, number>} */
   const seen = new Map();
   for (const run of runs) {
     const count = seen.get(run.short) ?? 0;
@@ -265,6 +493,11 @@ export function buildSuite(name, rawRuns, settings, threshold) {
 // A recorded spread, with the recorded unit added when the spread is a bare number, since values
 // are rescaled to the metric's unit while the spread is not.
 // pytest records a duration spread beside a throughput value, so its spread stays as recorded.
+/**
+ * @param {unknown} range
+ * @param {string} unit
+ * @param {unknown} tool
+ */
 function rangeText(range, unit, tool) {
   if (range === undefined || range === null || range === "") return null;
   const text = String(range);
@@ -274,6 +507,13 @@ function rangeText(range, unit, tool) {
 
 // Metrics are keyed by id and unit family, so one id recorded in seconds and in ops/s never
 // shares an axis, while seconds and milliseconds do.
+/**
+ * @param {Map<string, Metric>} metrics
+ * @param {string} id
+ * @param {string} unit
+ * @param {SuiteSettings} settings
+ * @returns {Metric}
+ */
 function metricFor(metrics, id, unit, settings) {
   const parsed = parseUnit(unit);
   const family = parsed ? `${parsed.family}|${parsed.tail}` : `raw|${unit}`;
@@ -282,7 +522,7 @@ function metricFor(metrics, id, unit, settings) {
   if (!metric) {
     const preferred = settings.metrics[id]?.unit;
     const target = typeof preferred === "string" ? parseUnit(preferred) : null;
-    const canonicalUnit = target && parsed && target.family === parsed.family && target.tail === parsed.tail ? preferred : unit;
+    const canonicalUnit = target && parsed && target.family === parsed.family && target.tail === parsed.tail ? String(preferred) : unit;
     metric = { key, id, unit: canonicalUnit, rowLabel: null, explicit: new Set(), implied: new Set(), direction: "lower", label: "", slug: "" };
     metrics.set(key, metric);
   }
@@ -291,6 +531,11 @@ function metricFor(metrics, id, unit, settings) {
 
 // Direction comes from the entries, then the config, then the tool that recorded them.
 // Conflicting declarations leave it unknown rather than letting the latest run rewrite history.
+/**
+ * @param {Map<string, Metric>} metrics
+ * @param {SuiteSettings} settings
+ * @param {Note} note
+ */
 function resolveMetrics(metrics, settings, note) {
   for (const metric of metrics.values()) {
     const configured = settings.metrics[metric.id] ?? {};
@@ -300,7 +545,7 @@ function resolveMetrics(metrics, settings, note) {
     } else if (metric.explicit.size > 1) {
       metric.direction = "unknown";
       note(`metric ${name} declares conflicting directions; its changes are shown without a verdict.`);
-    } else if (["lower", "higher"].includes(configured.direction)) {
+    } else if (configured.direction === "lower" || configured.direction === "higher") {
       metric.direction = configured.direction;
     } else if (metric.implied.size === 1) {
       metric.direction = [...metric.implied][0];
@@ -312,7 +557,7 @@ function resolveMetrics(metrics, settings, note) {
   }
   const counts = countBy([...metrics.values()], (m) => m.label);
   for (const metric of metrics.values()) {
-    if (counts.get(metric.label) > 1) metric.label = `${metric.label} (${metric.unit})`;
+    if ((counts.get(metric.label) ?? 0) > 1) metric.label = `${metric.label} (${metric.unit})`;
   }
   // Links name a metric by its id, or by its unit when the id is empty, never by its label.
   // Metrics are in order of first appearance, so the first family of an id keeps the plain id
@@ -334,10 +579,16 @@ function resolveMetrics(metrics, settings, note) {
 // change against the previous value in the same segment.
 // A segment ends when the dimensions or the environment change, so no automatic verdict compares
 // runs across a toolchain upgrade or a changed parameter.
+/**
+ * @param {History} history
+ * @param {SuiteSettings} settings
+ */
 function trace(history, settings) {
   let segment = 0;
   let previousIndex = -1;
+  /** @type {string | null} */
   let previousPrint = null;
+  /** @type {number | null} */
   let previousValue = null;
   for (let i = 0; i < history.observed.length; i += 1) {
     if (!history.observed[i]) continue;
@@ -357,18 +608,28 @@ function trace(history, settings) {
     const value = history.values[i];
     if (value === null) continue;
     const change = previousValue !== null && previousValue !== 0 ? relative(value, previousValue) : null;
-    if (Number.isFinite(change)) history.change[i] = change;
+    if (change !== null && Number.isFinite(change)) history.change[i] = change;
     previousValue = value;
   }
-  history.keys = new Set(history.dimsAt.filter(Boolean).flatMap((dims) => Object.keys(dims)));
+  history.keys = new Set(history.dimsAt.flatMap((dims) => (dims ? Object.keys(dims) : [])));
 }
 
+/**
+ * @param {Tags | null} source
+ * @param {Set<string>} keys
+ * @returns {Tags}
+ */
 function omit(source, keys) {
   const out = Object.create(null);
   for (const [key, value] of Object.entries(source ?? {})) if (!keys.has(key)) out[key] = value;
   return out;
 }
 
+// Each name whose value differs between two tag maps, as `name before → after`.
+/**
+ * @param {Tags | null} before
+ * @param {Tags | null} after
+ */
 function describeChanges(before, after) {
   const keys = unique([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
   return keys.filter((key) => token(before?.[key]) !== token(after?.[key])).map((key) => `${key} ${before?.[key] ?? "none"} → ${after?.[key] ?? "none"}`);
@@ -380,13 +641,25 @@ function describeChanges(before, after) {
 // The metrics of one explicit benchmark id always share a section, even when only some of them
 // gain dimensions, so a link to that benchmark keeps showing all of them.
 // Without dimensions or an id, a history joins the one section of such histories.
+/**
+ * @param {History[]} histories
+ * @param {SuiteSettings} settings
+ * @returns {Section[]}
+ */
 function buildSections(histories, settings) {
+  /** @type {Map<string, string>} */
   const parent = new Map();
+  /** @param {string} x */
   const find = (x) => {
-    while (parent.get(x) !== x) x = parent.get(x);
+    while (parent.get(x) !== x) x = /** @type {string} */ (parent.get(x));
     return x;
   };
+  /**
+   * @param {string} a
+   * @param {string} b
+   */
   const union = (a, b) => parent.set(find(a), find(b));
+  /** @param {History} history */
   const anchors = (history) => [
     ...[...history.keys].map((k) => `k:${k}`),
     ...(history.benchmarkId !== null || !history.keys.size ? [`b:${JSON.stringify(history.benchmarkId)}`] : []),
@@ -396,16 +669,18 @@ function buildSections(histories, settings) {
     for (const key of keys) if (!parent.has(key)) parent.set(key, key);
     for (const key of keys.slice(1)) union(keys[0], key);
   }
+  /** @type {Map<string, History[]>} */
   const groups = new Map();
   for (const history of histories) {
     const root = find(anchors(history)[0]);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(history);
+    const group = groups.get(root) ?? [];
+    group.push(history);
+    groups.set(root, group);
   }
 
   const sections = [...groups.values()].map((members) => buildSection(members, settings));
   const counts = countBy(sections, (s) => s.label);
-  for (const [i, s] of sections.entries()) if (counts.get(s.label) > 1) s.label = `${s.label} ${i + 1}`;
+  for (const [i, s] of sections.entries()) if ((counts.get(s.label) ?? 0) > 1) s.label = `${s.label} ${i + 1}`;
   return sections;
 }
 
@@ -413,36 +688,50 @@ function buildSections(histories, settings) {
 // drawn, labelled, colored, and filtered by the dimensions it was recorded with, even after its
 // benchmark's dimensions changed.
 // Traces of one history stay linked through it, which keeps change detection continuous.
+/**
+ * @param {History[]} histories
+ * @param {SuiteSettings} settings
+ * @returns {Section}
+ */
 function buildSection(histories, settings) {
+  /** @type {Trace[]} */
   const traces = [];
   for (const history of histories) {
+    /** @type {Map<string, Trace>} */
     const bySignature = new Map();
     for (let i = 0; i < history.observed.length; i += 1) {
-      if (!history.observed[i]) continue;
-      const signature = canonical(history.dimsAt[i]);
+      const dims = history.dimsAt[i];
+      if (!history.observed[i] || !dims) continue;
+      const signature = canonical(dims);
       // A trace keeps the set of runs it owns rather than a mask over every run, so a benchmark
       // whose dimensions change on every run stays linear in memory.
-      if (!bySignature.has(signature)) bySignature.set(signature, { history, dims: history.dimsAt[i], own: new Set() });
-      bySignature.get(signature).own.add(i);
+      let trace = bySignature.get(signature);
+      if (!trace) {
+        trace = { history, dims, own: new Set(), key: `${history.key}\u0002${signature}`, label: "", slug: "" };
+        bySignature.set(signature, trace);
+      }
+      trace.own.add(i);
     }
-    for (const [signature, trace] of bySignature) traces.push({ ...trace, key: `${history.key}\u0002${signature}` });
+    traces.push(...bySignature.values());
   }
 
   // Dimensions in config order, then in order of first appearance.
   const keys = unique(histories.flatMap((history) => [...history.keys]));
-  const order = (key) => Number(settings.dimensions[key]?.order ?? Infinity);
+  const order = (/** @type {string} */ key) => Number(settings.dimensions[key]?.order ?? Infinity);
   keys.sort((a, b) => order(a) - order(b));
 
   const dims = keys.map((key) => {
+    /** @type {Map<string, Scalar>} */
     const values = new Map();
     let missing = false;
     for (const trace of traces) {
       if (!Object.hasOwn(trace.dims, key)) missing = true;
       else if (!values.has(token(trace.dims[key]))) values.set(token(trace.dims[key]), trace.dims[key]);
     }
+    /** @type {DimensionValue[]} */
     const list = [...values.entries()].map(([tok, value]) => ({ token: tok, value, index: 0, text: "", param: "" }));
     // Numbers sort by size; strings and booleans keep their order of appearance.
-    if (list.every(({ value }) => typeof value === "number")) list.sort((a, b) => a.value - b.value);
+    if (list.every(({ value }) => typeof value === "number")) list.sort((a, b) => Number(a.value) - Number(b.value));
     if (missing) list.push({ token: MISSING, value: undefined, index: 0, text: "", param: "" });
     const texts = shortTexts(list.map(({ value }) => value));
     for (const [i, entry] of list.entries()) {
@@ -453,7 +742,7 @@ function buildSection(histories, settings) {
     const plain = countBy(list, (v) => String(v.value));
     for (const entry of list) {
       entry.param = urlText(entry.value);
-      if (plain.get(String(entry.value)) > 1 && typeof entry.value === "string") entry.text = `"${entry.value}"`;
+      if ((plain.get(String(entry.value)) ?? 0) > 1 && typeof entry.value === "string") entry.text = `"${entry.value}"`;
     }
     return { key, label: dimensionLabel(key, settings), values: list, byToken: new Map(list.map((v) => [v.token, v])), varying: list.length > 1 };
   });
@@ -461,6 +750,7 @@ function buildSection(histories, settings) {
   // A section with dimensions is linked by their keys; one without is a single benchmark, linked
   // by its id after `#`, or by `#` alone for the benchmark recorded with neither.
   const benchmarkId = histories[0]?.benchmarkId ?? null;
+  /** @type {Section} */
   const section = {
     label: dims.map((d) => d.label).join(" × ") || "Benchmarks",
     keys,
@@ -478,7 +768,7 @@ function buildSection(histories, settings) {
   for (const metric of section.metrics) {
     const members = traces.filter((trace) => trace.history.metric === metric);
     const counts = countBy(members, (trace) => trace.label);
-    for (const trace of members) if (counts.get(trace.label) > 1) trace.label = `${trace.label} (${trace.history.name})`;
+    for (const trace of members) if ((counts.get(trace.label) ?? 0) > 1) trace.label = `${trace.label} (${trace.history.name})`;
     for (const trace of members) trace.slug = `${linkPart(metric.slug)}:${traceIdentity(trace)}`;
   }
   return section;
@@ -487,6 +777,7 @@ function buildSection(histories, settings) {
 // A trace's identity in a link: its benchmark id after `#` when it has one, then its dimensions in
 // key order as `key=value`, joined by `/`, with every part escaped so the joins stay unambiguous.
 // Together with the metric, these identify exactly one trace, whatever runs are added later.
+/** @param {Trace} trace */
 function traceIdentity(trace) {
   const id = trace.history.benchmarkId;
   const dims = Object.keys(trace.dims)
@@ -497,6 +788,10 @@ function traceIdentity(trace) {
 
 // A trace's label is the config template when every name it uses is one of the trace's
 // dimensions, otherwise the values of the dimensions that vary in its section.
+/**
+ * @param {Trace} trace
+ * @param {Section} section
+ */
 function traceLabel(trace, section) {
   const template = typeof section.settings.label === "string" ? section.settings.label : null;
   if (template) {
@@ -509,26 +804,37 @@ function traceLabel(trace, section) {
   return parts.join(" / ") || trace.history.name;
 }
 
+/**
+ * @param {Record<string, unknown>} raw
+ * @param {number} index
+ * @returns {Run}
+ */
 function normalizeRun(raw, index) {
-  const commit = isPlainObject(raw.commit) ? raw.commit : {};
+  const commit = plainObject(raw.commit);
+  const author = plainObject(commit.author);
   const message = String(commit.message ?? "");
   const id = String(commit.id ?? "");
   // Dates outside what Date can represent would throw when formatted.
-  const date = [Number(raw.date), Date.parse(commit.timestamp)].find((ms) => Number.isFinite(ms) && Math.abs(ms) < 8.64e15) ?? 0;
+  const date = [Number(raw.date), Date.parse(String(commit.timestamp))].find((ms) => Number.isFinite(ms) && Math.abs(ms) < 8.64e15) ?? 0;
   return {
     index,
     id,
     short: id.slice(0, 7) || `run${index + 1}`,
+    key: "",
     message,
     subject: message.split("\n")[0].trim() || "(no commit message)",
     body: message.split("\n").slice(1).join("\n").trim(),
     url: safeUrl(commit.url),
-    author: String(commit.author?.name || commit.author?.username || "unknown author"),
+    author: String(author.name || author.username || "unknown author"),
     date,
     tool: raw.tool,
   };
 }
 
+/**
+ * @param {string} id
+ * @param {string} unit
+ */
 function metricLabel(id, unit) {
   if (!id) {
     // A unit with a tail, such as MB/s, is a rate rather than a size, so it names itself.
@@ -538,11 +844,16 @@ function metricLabel(id, unit) {
   return humanize(id);
 }
 
+/**
+ * @param {string} key
+ * @param {SuiteSettings} settings
+ */
 function dimensionLabel(key, settings) {
   const label = settings.dimensions[key]?.label;
   return typeof label === "string" && label ? label : humanize(key);
 }
 
+/** @param {string} id */
 function humanize(id) {
   const words = id.replace(/[_]+/g, " ").replace(/\b(cpu|rss|gc|io|ram|ipc|gpu|simd)\b/gi, (word) => word.toUpperCase());
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -550,6 +861,11 @@ function humanize(id) {
 
 // How a dimension value reads inside a label: strings as themselves, numbers and booleans with
 // their dimension's name, since a bare `8` says nothing.
+/**
+ * @param {Dimension} dim
+ * @param {Scalar | undefined} value
+ * @returns {string}
+ */
 export function valueText(dim, value) {
   if (value === undefined) return `no ${dim.label.toLowerCase()}`;
   if (typeof value === "number") return `${dim.label.toLowerCase()} ${value}`;
@@ -559,6 +875,10 @@ export function valueText(dim, value) {
 
 // Drops a prefix and suffix that every string value shares, cut at a delimiter, so
 // `okta.hand-written` and `oxide.hand-written` read as `okta` and `oxide`.
+/**
+ * @param {Array<Scalar | undefined>} values
+ * @returns {string[]}
+ */
 function shortTexts(values) {
   const strings = values.filter((v) => typeof v === "string");
   const fallback = values.map((v) => (v === undefined ? "none" : String(v)));
@@ -590,6 +910,10 @@ function shortTexts(values) {
 }
 
 // A link target from recorded data, kept only when it is an http or https URL.
+/**
+ * @param {unknown} url
+ * @returns {string | null}
+ */
 export function safeUrl(url) {
   try {
     const parsed = new URL(String(url));

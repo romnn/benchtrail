@@ -6,16 +6,6 @@
     "lib": ["es2024"],
     "types": ["node"]
   },
-  // The page's browser-free modules are checked here too, without DOM types, so the tests can
-  // import them and they can never reach for the browser.
-  "include": [
-    "sample/**/*.mjs",
-    "scripts/**/*.mjs",
-    "test/**/*.mjs",
-    "site/benchtrail/detect.js",
-    "site/benchtrail/format.js",
-    "site/benchtrail/history.js",
-    "site/benchtrail/identity.js",
-    "site/benchtrail/list.js"
-  ]
+  // Tests import the page's core modules, so they are part of this project too.
+  "include": ["sample/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "site/benchtrail/core/**/*.js"]
 }

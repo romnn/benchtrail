@@ -1,6 +1,44 @@
 // Finding the runs where a benchmark's level shifted, robustly enough that noise and lone outliers
 // do not count.
 
+/** @typedef {"lower" | "higher" | "unknown"} Direction */
+
+/**
+ * How a detected shift reads for the benchmark: worse or better when the metric has a direction,
+ * moved when it does not.
+ * @typedef {"worse" | "better" | "moved"} ShiftKind
+ */
+
+/**
+ * How a value at a run reads: a shift, noise when it was judged without finding one, unjudged
+ * when too few earlier values allow a judgement, and none where nothing was measured.
+ * @typedef {ShiftKind | "noise" | "unjudged" | "none"} Judgement
+ */
+
+/**
+ * A detected shift at the run that started it.
+ * `shift` is that run's own relative change against the baseline, and a tentative shift has not
+ * yet been confirmed by enough later runs.
+ * @typedef {{ kind: ShiftKind, shift: number, tentative: boolean }} Shift
+ */
+
+/**
+ * One benchmark's values in run order, as detection reads them.
+ * `observed` marks the runs that recorded the benchmark at all, with or without a usable value,
+ * and `segment` numbers the comparison segment of each observed run.
+ * @typedef {object} Series
+ * @property {ReadonlyArray<number | null>} values
+ * @property {ReadonlyArray<boolean>} observed
+ * @property {ReadonlyArray<number | null>} segment
+ * @property {Direction} direction
+ */
+
+/**
+ * By run: the shift detected there, and the baseline the run was judged against, or null where it
+ * was not judged.
+ * @typedef {{ shifts: Array<Shift | null>, baselines: Array<number | null> }} Detection
+ */
+
 // Change detection compares each value with the median of up to BASELINE_RUNS earlier values in
 // its regime, and confirms a shift with the median of CONFIRM_RUNS values starting at the run.
 export const BASELINE_RUNS = 20;
@@ -37,45 +75,54 @@ const SHORT_BASELINE = 3;
 // A comparison that is not finite, such as against a vanishingly small baseline, is never
 // reported.
 // Without a known direction, a shift is still found but only reported as a move.
-export function detect(history, threshold) {
-  const n = history.values.length;
-  history.verdicts = new Array(n).fill(null);
-  history.baseline = new Array(n).fill(null);
-  const direction = history.metric.direction;
+/**
+ * @param {Series} series
+ * @param {number} threshold the smallest relative change that may be reported
+ * @returns {Detection}
+ */
+export function detect(series, threshold) {
+  const n = series.values.length;
+  /** @type {Detection} */
+  const result = { shifts: new Array(n).fill(null), baselines: new Array(n).fill(null) };
+  // The runs with a usable value, which are the only ones compared.
+  /** @type {number[]} */
   const points = [];
   // The last observed run of each segment, valued or not, where confirmation must stop.
+  /** @type {Map<number | null, number>} */
   const segmentEnd = new Map();
   let lastObserved = -1;
   for (let i = 0; i < n; i += 1) {
-    if (history.observed[i]) {
-      segmentEnd.set(history.segment[i], i);
+    if (series.observed[i]) {
+      segmentEnd.set(series.segment[i], i);
       lastObserved = i;
     }
-    if (history.values[i] !== null) points.push(i);
+    if (series.values[i] !== null) points.push(i);
   }
+  const value = (/** @type {number} */ i) => /** @type {number} */ (series.values[i]);
+  // Both lists below are never empty where their median is taken.
+  const middleOf = (/** @type {number[]} */ values) => /** @type {number} */ (median(values));
 
   let regime = 0;
   for (let p = 0; p < points.length; p += 1) {
     const i = points[p];
-    if (p > 0 && history.segment[i] !== history.segment[points[p - 1]]) regime = p;
-    const before = points.slice(Math.max(regime, p - BASELINE_RUNS), p).map((k) => history.values[k]);
+    if (p > 0 && series.segment[i] !== series.segment[points[p - 1]]) regime = p;
+    const before = points.slice(Math.max(regime, p - BASELINE_RUNS), p).map(value);
     if (before.length < MIN_BASELINE) continue;
-    const base = median(before);
+    const base = middleOf(before);
     // A zero baseline has no relative scale, so it leaves the run unjudged.
     if (!base) continue;
-    history.baseline[i] = base;
+    result.baselines[i] = base;
 
     // Confirming values
-    const end = segmentEnd.get(history.segment[i]);
+    const end = /** @type {number} */ (segmentEnd.get(series.segment[i]));
     const after = [];
-    for (let q = p; q < points.length && points[q] <= end && after.length < CONFIRM_RUNS; q += 1) after.push(history.values[points[q]]);
+    for (let q = p; q < points.length && points[q] <= end && after.length < CONFIRM_RUNS; q += 1) after.push(value(points[q]));
     if (after.length < CONFIRM_RUNS && end < lastObserved) continue;
 
     // Limit
-    const middle = median(after);
-    const level = relative(middle, base);
-    const own = relative(history.values[i], base);
-    const sigma = (1.4826 * median(before.map((x) => Math.abs(x - base)))) / Math.abs(base);
+    const level = relative(middleOf(after), base);
+    const own = relative(value(i), base);
+    const sigma = (1.4826 * middleOf(before.map((x) => Math.abs(x - base)))) / Math.abs(base);
     const spread = Math.sqrt(1 / before.length + 1 / after.length) * (1 + SHORT_BASELINE / before.length);
     const limit = Math.max(threshold, NOISE_WIDTHS * 1.25 * sigma * spread);
     if (![level, own, limit].every(Number.isFinite)) continue;
@@ -84,28 +131,38 @@ export function detect(history, threshold) {
 
     // Range gate
     const sorted = [...before].sort((a, b) => a - b);
-    const beyond = level > 0 ? (x) => x > sorted.at(-2) : (x) => x < sorted[1];
+    const beyond = level > 0 ? (/** @type {number} */ x) => x > sorted[sorted.length - 2] : (/** @type {number} */ x) => x < sorted[1];
     if (!after.every(beyond)) continue;
 
     // Detected shift
     regime = p;
+    /** @type {ShiftKind} */
     let kind = "moved";
-    if (direction === "higher") kind = level < 0 ? "worse" : "better";
-    else if (direction === "lower") kind = level > 0 ? "worse" : "better";
-    history.verdicts[i] = { kind, shift: own, tentative: after.length < CONFIRM_RUNS };
+    if (series.direction === "higher") kind = level < 0 ? "worse" : "better";
+    else if (series.direction === "lower") kind = level > 0 ? "worse" : "better";
+    result.shifts[i] = { kind, shift: own, tentative: after.length < CONFIRM_RUNS };
   }
+  return result;
 }
 
 // The signed change from a reference, scaled by its magnitude, so a rise is positive even for a
 // negative reference.
 // Dividing before subtracting keeps the difference of two huge values of opposite sign finite;
 // the result is still not finite for a vanishingly small reference, which callers reject.
+/**
+ * @param {number} value
+ * @param {number} reference
+ */
 export function relative(value, reference) {
   return value / Math.abs(reference) - Math.sign(reference);
 }
 
 // The midpoint of two values of opposite sign is their halved sum, and of two values of the same
 // sign a half step from the lower one, so neither form can overflow.
+/**
+ * @param {readonly number[]} values
+ * @returns {number | null}
+ */
 export function median(values) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);

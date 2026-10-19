@@ -3,25 +3,28 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detect, median, relative } from "../site/benchtrail/detect.js";
+import { detect, median, relative } from "../site/benchtrail/core/detect.js";
 
 const THRESHOLD = 0.05;
 
-// A history as detection reads it: values per run, the comparison segment of each observed run,
-// and which runs observed the benchmark at all.
-function history(values, { segment = null, direction = "lower" } = {}) {
+// A series as detection reads it: values per run, which runs observed the benchmark at all, and
+// the comparison segment of each.
+/**
+ * @param {Array<number | null>} values
+ * @param {{ segment?: Array<number | null> | null, direction?: import("../site/benchtrail/core/detect.js").Direction }} [options]
+ * @returns {import("../site/benchtrail/core/detect.js").Series}
+ */
+function series(values, { segment = null, direction = "lower" } = {}) {
   return {
     values,
     segment: segment ?? values.map(() => 0),
     observed: values.map(() => true),
-    metric: { direction },
+    direction,
   };
 }
 
 function shifts(values, options) {
-  const h = history(values, options);
-  detect(h, THRESHOLD);
-  return h.verdicts.flatMap((verdict, i) => (verdict ? [{ i, ...verdict }] : []));
+  return detect(series(values, options), THRESHOLD).shifts.flatMap((shift, i) => (shift ? [{ i, ...shift }] : []));
 }
 
 const flat = (n, value = 100) => Array.from({ length: n }, () => value);

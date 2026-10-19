@@ -7,5 +7,5 @@
     "lib": ["es2024", "dom", "dom.iterable"],
     "types": []
   },
-  "include": ["site/**/*.js", "types/**/*.d.ts"]
+  "include": ["site/**/*.js", "types/globals.d.ts"]
 }
