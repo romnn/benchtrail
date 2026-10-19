@@ -95,7 +95,17 @@ test("the entry point reads its inputs and fails the step on a problem", async (
   const failed = run({ INPUT_PATH: dir, INPUT_SETTINGS: '{ "names": "(" }' });
   assert.equal(failed.status, 1);
   assert.match(failed.stdout, /^::error::The setting `names` is not a valid regular expression: /m);
+  const escaped = run({ INPUT_PATH: dir, INPUT_SETTINGS: '{ "50%": 1 }' });
+  assert.match(escaped.stdout, /^::error::The setting `\["50%25"\]` is not a setting\.$/m);
   const empty = run({ INPUT_PATH: " ", INPUT_SETTINGS: "" });
   assert.equal(empty.status, 1);
   assert.match(empty.stdout, /^::error::The path input is empty/m);
+});
+
+test("a directory that cannot be written fails the step with an annotation", async (t) => {
+  const dir = await pagesDir(t);
+  // A directory inside a file cannot be created.
+  const run = spawnSync(process.execPath, [MAIN], { env: { ...process.env, INPUT_PATH: path.join(dir, "data.js", "bench") }, encoding: "utf8" });
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /^::error::benchtrail could not be installed into /m);
 });

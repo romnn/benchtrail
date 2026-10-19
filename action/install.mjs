@@ -34,7 +34,7 @@ export async function install({ dir, settings }) {
   const existing = await readIfPresent(settingsPath);
   const text = settings ?? existing;
 
-  // Check the settings
+  // Check the settings before anything in the directory changes.
   /** @type {unknown} */
   let raw = {};
   if (text !== null) {

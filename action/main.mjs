@@ -29,7 +29,11 @@ if (!dir) {
   annotate("error", "The path input is empty; name the directory that holds the history.");
   process.exitCode = 1;
 } else {
-  const outcome = await install({ dir: path.resolve(dir), settings: settings || null });
+  // A directory that cannot be written fails the step with an annotation, as a problem does.
+  const outcome = await install({ dir: path.resolve(dir), settings: settings || null }).catch((error) => ({
+    problems: [`benchtrail could not be installed into ${dir}: ${error.message}`],
+    warnings: [],
+  }));
   for (const problem of outcome.problems) annotate("error", problem);
   for (const warning of outcome.warnings) annotate("warning", warning);
   if (outcome.problems.length) process.exitCode = 1;
