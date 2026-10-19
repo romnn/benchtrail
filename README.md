@@ -22,35 +22,22 @@ benchtrail goes into that directory, beside the history.
 
 ### With GitHub Actions
 
-The benchtrail action installs the dashboard into the directory and writes its settings there.
-A job that runs after the benchmarks checks out the Pages branch, installs the dashboard, and
-deploys the result to GitHub Pages, set to publish from Actions:
+benchtrail's Pages workflow checks out the Pages branch, installs the dashboard beside the
+history, and deploys the result to GitHub Pages, which must be set to publish from Actions.
+Call it from a job that runs after the benchmarks:
 
 ```yaml
 deploy:
   needs: benchmark
-  runs-on: ubuntu-latest
   permissions:
     contents: read
     pages: write
     id-token: write
-  environment:
-    name: github-pages
-    url: ${{ steps.deployment.outputs.page_url }}
-  steps:
-    - uses: actions/checkout@v7
-      with:
-        ref: gh-pages
-    - uses: romnn/benchtrail@v0.1.0
-      with:
-        path: dev/bench
-        settings: |
-          { "title": "My project benchmarks" }
-    - uses: actions/upload-pages-artifact@v5
-      with:
-        path: .
-    - id: deployment
-      uses: actions/deploy-pages@v5
+  uses: romnn/benchtrail/.github/workflows/pages.yaml@v0.1.0
+  with:
+    path: dev/bench
+    settings: |
+      { "title": "My project benchmarks" }
 ```
 
 The Pages branch keeps only the history, and every deploy installs the dashboard of the pinned
@@ -58,15 +45,29 @@ release.
 A deploy from Actions is also what publishes a push made with `GITHUB_TOKEN`, which does not start
 a branch-based Pages build.
 
-| Input      | Default     | Meaning                                                                                                                               |
-| ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`     | `dev/bench` | The directory that holds the history. The dashboard's files are replaced there; the history and any other file stay.                 |
-| `settings` |             | The [settings](#settings) as a JSON object, written to `benchtrail.json`. Without it, the directory keeps the settings it has. |
+| Input      | Default     | Meaning                                                                                                         |
+| ---------- | ----------- | --------------------------------------------------------------------------------------------------------------- |
+| `branch`   | `gh-pages`  | The branch github-action-benchmark commits the history to.                                                      |
+| `path`     | `dev/bench` | The directory on that branch that holds the history, as `benchmark-data-dir-path` names it.                     |
+| `settings` |             | The [settings](#settings) as a JSON object, written to `benchtrail.json`. Without it, the directory keeps its own. |
 
-Settings that break a rule fail the step before anything is written, and a directory without
-`data.js` is installed with a warning.
+Settings that break a rule fail the deploy before anything is published, and a directory without
+`data.js` is deployed with a warning.
 Pin an exact release: before 1.0, a minor release may change the settings.
 Dependabot or Renovate can keep the pin current.
+
+For any other site, such as one a documentation build assembles, the `romnn/benchtrail@v0.1.0`
+action installs the dashboard into a directory and leaves publishing to the workflow.
+It takes the same `path` and `settings`; the dashboard's files are replaced there, and the history
+and any other file stay.
+
+```yaml
+- uses: romnn/benchtrail@v0.1.0
+  with:
+    path: site/static/bench
+    settings: |
+      { "title": "My project benchmarks" }
+```
 
 ### By hand
 
@@ -85,6 +86,8 @@ To upgrade later, replace all of them, since a release may change the page's mar
 ECharts build.
 Your settings live in `benchtrail.json`, which the archive does not hold, so an upgrade leaves them
 as they are.
+Release 0.1.0 kept them in a block inside `index.html`: when upgrading from it, copy that block's
+JSON into `benchtrail.json` before replacing the page.
 
 ### Settings
 

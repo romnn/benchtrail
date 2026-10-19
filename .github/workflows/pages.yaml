@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/refs/heads/master/src/schemas/json/github-workflow.json
+name: pages
+
+# Deploys a github-action-benchmark history to GitHub Pages, with the dashboard installed beside it.
+# A workflow calls it from a job that runs after its benchmarks, and Pages publishes from Actions.
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: The branch github-action-benchmark commits the history to.
+        type: string
+        default: gh-pages
+      path:
+        description: The directory on that branch that holds the history, as `benchmark-data-dir-path` names it.
+        type: string
+        default: dev/bench
+      settings:
+        description: The page's settings as a JSON object; without them, the directory keeps the settings it has.
+        type: string
+        default: ""
+    outputs:
+      page_url:
+        description: The address of the deployed site.
+        value: ${{ jobs.deploy.outputs.page_url }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # A deploy that has started finishes, so the site never ends between two histories.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+          persist-credentials: false
+      # A called workflow cannot name the release it was called at, so it pins its own release, which
+      # the release bump keeps in step.
+      - uses: romnn/benchtrail@v0.1.0
+        with:
+          path: ${{ inputs.path }}
+          settings: ${{ inputs.settings }}
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: .
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

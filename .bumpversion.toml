@@ -4,8 +4,14 @@ commit = true
 tag = true
 message = "chore(release): bump version to {new_version}"
 
-# The README's workflow example pins the action to the release it documents.
+# The README's examples pin the release they document, and the Pages workflow pins the action of
+# its own release, since a called workflow cannot name the release it was called at.
 [[tool.bumpversion.files]]
 filename = "README.md"
+search = "@v{current_version}"
+replace = "@v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = ".github/workflows/pages.yaml"
 search = "romnn/benchtrail@v{current_version}"
 replace = "romnn/benchtrail@v{new_version}"
