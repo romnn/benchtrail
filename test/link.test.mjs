@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { dimensionParam, emptyLink, formatLink, parseLink } from "../site/benchtrail/core/link.js";
+import { dimensionParam, emptyLink, formatLink, parseLink, runsRoute } from "../site/benchtrail/core/link.js";
 import { only, reduce } from "../site/benchtrail/core/selection.js";
 
 // Links the page writes today, which must read back to exactly the same text.
@@ -52,15 +52,20 @@ test("sections are named by their keys, or by their benchmark when they have non
   assert.deepEqual(parseLink("?section=s:%23odd,threads").section, { kind: "keys", keys: ["#odd", "threads"] });
 });
 
-test("the run list's search, sort, and window only reach the link on the runs page", () => {
-  const elsewhere = { ...emptyLink(), query: "walk", sort: /** @type {const} */ ({ line: "time:", order: "worst" }), inWindow: true };
-  assert.equal(formatLink(elsewhere), "");
-  assert.equal(formatLink({ ...elsewhere, route: { kind: "runs" } }), "page=runs&q=walk&sort=time:&in=window");
+test("the run list's search, sort, and window belong to the runs page", () => {
+  // Elsewhere the list's parameters read as nothing, and opening another page drops them.
+  assert.deepEqual(parseLink("?q=walk&in=window").route, { kind: "overview" });
+  const listed = parseLink("?page=runs&q=walk&sort=time:&in=window");
+  assert.equal(formatLink(listed), "page=runs&q=walk&sort=time:&in=window");
+  assert.equal(formatLink(reduce(listed, { type: "open", route: { kind: "overview" } })), "");
+  // The list's choices change only on its page.
+  assert.equal(formatLink(reduce(listed, { type: "list", changes: { onlyChanges: true } })), "page=runs&q=walk&only=changes&sort=time:&in=window");
+  assert.equal(formatLink(reduce(emptyLink(), { type: "list", changes: { onlyChanges: true } })), "");
 });
 
 test("a link opens the overview, the runs page, or one chart, named by the chart alone", () => {
   assert.deepEqual(parseLink("").route, { kind: "overview" });
-  assert.deepEqual(parseLink("?page=runs").route, { kind: "runs" });
+  assert.deepEqual(parseLink("?page=runs").route, runsRoute());
   assert.deepEqual(parseLink("?page=nope").route, { kind: "overview" });
   // A chart id keeps its escaped parts through the round trip, and a chart wins over a page name.
   const chart = parseLink("?page=runs&chart=time:doc%3Da%252Fb/threads%3D4");
@@ -78,7 +83,8 @@ test("opening a page keeps what the link shows, with any changes the page asks f
 test("switching suite or section starts the section's choices afresh", () => {
   const busy = parseLink("?page=runs&suite=A&metrics=cpu&threads=4&color=threads&run=abc&from=a&to=b&sort=time:&values=change");
   const next = reduce(busy, { type: "suite", suite: "B" });
-  // Choices about what to show reset; how to show it, and the page, stay.
+  // Choices about what to show reset, including the run list's sort by a line; how to show it,
+  // and the page, stay.
   assert.equal(formatLink(next), "page=runs&suite=B&values=change");
   assert.equal(formatLink(reduce(busy, { type: "section", section: { kind: "keys", keys: ["os"] } })), "page=runs&suite=A&section=os&values=change");
   // A chart belongs to its section, so a chart page gives way to the overview.

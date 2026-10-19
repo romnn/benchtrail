@@ -5,6 +5,7 @@
 /** @typedef {import("./link.js").LinkState} LinkState */
 /** @typedef {import("./link.js").RangeKey} RangeKey */
 /** @typedef {import("./link.js").Route} Route */
+/** @typedef {import("./link.js").RunList} RunList */
 /** @typedef {import("./link.js").SectionRef} SectionRef */
 /**
  * @template T
@@ -13,12 +14,13 @@
 
 /**
  * The parts of a link that change on their own, without touching anything else.
- * @typedef {Pick<LinkState, "scale" | "axis" | "smoothing" | "color" | "dash" | "window" | "run" | "layout" | "more" | "allCharts" | "changes" | "query" | "onlyChanges" | "inWindow" | "sort">} Settable
+ * @typedef {Pick<LinkState, "scale" | "axis" | "smoothing" | "color" | "dash" | "window" | "run" | "layout" | "more" | "allCharts" | "changes">} Settable
  */
 
 /**
  * @typedef {{ type: "set", changes: Partial<Settable> }
  *   | { type: "open", route: Route, changes?: Partial<Settable> }
+ *   | { type: "list", changes: Partial<RunList> }
  *   | { type: "suite", suite: string | null }
  *   | { type: "section", section: SectionRef | null }
  *   | { type: "range", range: RangeKey }
@@ -41,13 +43,16 @@ export function reduce(link, action) {
     // show the same filters, window, and run.
     case "open":
       return { ...link, ...action.changes, route: action.route };
+    // The run list's choices change only on its page.
+    case "list":
+      return link.route.kind === "runs" ? { ...link, route: { kind: "runs", list: { ...link.route.list, ...action.changes } } } : link;
     // Filters, pivot, run, window, and sort name things inside one section, so a new suite or
     // section starts them afresh, and a chart page, whose chart belongs to one section, gives way
     // to the overview.
     case "suite":
-      return { ...link, ...sectionDefaults(), route: leaveChart(link.route), suite: action.suite, section: null };
+      return { ...link, ...sectionDefaults(), route: sectionRoute(link.route), suite: action.suite, section: null };
     case "section":
-      return { ...link, ...sectionDefaults(), route: leaveChart(link.route), section: action.section };
+      return { ...link, ...sectionDefaults(), route: sectionRoute(link.route), section: action.section };
     // A window names runs inside the range, so a new range shows all of it.
     case "range":
       return { ...link, range: action.range, window: { kind: "full" } };
@@ -70,7 +75,7 @@ export function reduce(link, action) {
   }
 }
 
-/** @returns {Pick<LinkState, "metrics" | "dimensions" | "color" | "dash" | "layout" | "run" | "window" | "sort">} */
+/** @returns {Pick<LinkState, "metrics" | "dimensions" | "color" | "dash" | "layout" | "run" | "window">} */
 function sectionDefaults() {
   return {
     metrics: { kind: "all" },
@@ -80,15 +85,17 @@ function sectionDefaults() {
     layout: "auto",
     run: { kind: "latest" },
     window: { kind: "full" },
-    sort: null,
   };
 }
 
 /**
+ * The page a new suite or section opens: the same one, except that the run list's sort names a
+ * line of the old section, and a chart belongs to it.
  * @param {Route} route
  * @returns {Route}
  */
-function leaveChart(route) {
+function sectionRoute(route) {
+  if (route.kind === "runs") return { kind: "runs", list: { ...route.list, sort: null } };
   return route.kind === "chart" ? { kind: "overview" } : route;
 }
 

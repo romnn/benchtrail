@@ -2,6 +2,7 @@
 // change; the overview links to it.
 
 import { formatDateTime, formatValue } from "../core/format.js";
+import { runsRoute } from "../core/link.js";
 import { searchRun, searchTokens } from "../core/search.js";
 import { badness } from "../core/view.js";
 import { changeElement, h, icon, lineKey } from "../dom.js";
@@ -25,7 +26,7 @@ export function runsRegion(page) {
         listed
           ? ""
           : page.anchor(
-              { type: "open", route: { kind: "runs" } },
+              { type: "open", route: runsRoute() },
               { class: "wide-toggle" },
               `All ${count} ${count === 1 ? "run" : "runs"}`,
               icon("right", "toggle-icon"),
@@ -36,20 +37,23 @@ export function runsRegion(page) {
   }
 
   function renderHistory() {
+    const route = page.link.route;
+    if (route.kind !== "runs") return;
+    const list = route.list;
     const search = /** @type {HTMLInputElement} */ (document.getElementById("search"));
-    if (search.value !== page.link.query && document.activeElement !== search) search.value = page.link.query;
-    /** @type {HTMLInputElement} */ (document.getElementById("only-changes")).checked = page.link.onlyChanges;
+    if (search.value !== list.query && document.activeElement !== search) search.value = list.query;
+    /** @type {HTMLInputElement} */ (document.getElementById("only-changes")).checked = list.onlyChanges;
 
     const table = document.getElementById("history-table");
-    const tokens = searchTokens(page.link.query);
-    const sort = page.link.sort;
+    const tokens = searchTokens(list.query);
+    const sort = list.sort;
     const sortLine = sort && page.view.lines.find((b) => b.slug === sort.line);
 
     // The list shows every run in range, or, when the reader asks, only those in the zoom window.
     const { first, last } = page.zoomWindow();
     const zoomed = first > 0 || last < page.view.runs.length - 1;
-    const windowed = zoomed && page.link.inWindow;
-    renderWindowToggle(zoomed, first, last);
+    const windowed = zoomed && list.inWindow;
+    renderWindowToggle(list, zoomed, first, last);
     const significant = (run) => {
       const counts = page.view.counts(run);
       return counts.worse + counts.better + counts.moved > 0;
@@ -57,9 +61,9 @@ export function runsRegion(page) {
     let runs = page.view.runs
       .map((run, j) => ({ run, j }))
       .filter(({ j }) => !windowed || (j >= first && j <= last))
-      .map((entry) => ({ ...entry, match: tokens.length ? searchRun(entry.run, tokens, page.link.query) : null }))
+      .map((entry) => ({ ...entry, match: tokens.length ? searchRun(entry.run, tokens, list.query) : null }))
       .filter(({ match }) => !tokens.length || match)
-      .filter(({ run }) => !page.link.onlyChanges || significant(run));
+      .filter(({ run }) => !list.onlyChanges || significant(run));
     if (tokens.length && !sortLine) {
       // Search results rank by relevance, newest first among equals.
       runs.sort((a, b) => b.match.tier - a.match.tier || b.match.score - a.match.score || b.j - a.j);
@@ -88,7 +92,7 @@ export function runsRegion(page) {
             let next = { line: line.slug, order: "worst" };
             if (active) next = sort.order === "worst" ? { line: line.slug, order: "best" } : null;
             shown = PAGE_SIZE;
-            page.dispatch({ type: "set", changes: { sort: next } }, renderHistory);
+            page.dispatch({ type: "list", changes: { sort: next } }, renderHistory);
           },
         },
         label,
@@ -151,10 +155,10 @@ export function runsRegion(page) {
   }
 
   // The toggle that keeps the list to the zoom window, offered while the charts are zoomed.
-  function renderWindowToggle(zoomed, first, last) {
+  function renderWindowToggle(list, zoomed, first, last) {
     const label = document.getElementById("in-window-label");
     label.hidden = !zoomed;
-    /** @type {HTMLInputElement} */ (document.getElementById("in-window")).checked = page.link.inWindow;
+    /** @type {HTMLInputElement} */ (document.getElementById("in-window")).checked = list.inWindow;
     const runs = page.view.runs;
     document.getElementById("in-window-range").textContent = zoomed ? `${runs[first].short} to ${runs[last].short}, ${last - first + 1} runs` : "";
   }
@@ -181,14 +185,13 @@ export function runsRegion(page) {
 
   function wire() {
     const search = /** @type {HTMLInputElement} */ (document.getElementById("search"));
-    search.value = page.link.query;
     // Searching waits for a short pause in typing, so a long history is not searched per keystroke.
     search.addEventListener("input", () => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(
         page.safely(() => {
           shown = PAGE_SIZE;
-          page.dispatch({ type: "set", changes: { query: search.value } }, renderHistory);
+          page.dispatch({ type: "list", changes: { query: search.value } }, renderHistory);
         }),
         120,
       );
@@ -199,11 +202,11 @@ export function runsRegion(page) {
     });
     document.getElementById("only-changes").addEventListener("change", (event) => {
       shown = PAGE_SIZE;
-      page.dispatch({ type: "set", changes: { onlyChanges: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
+      page.dispatch({ type: "list", changes: { onlyChanges: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
     });
     document.getElementById("in-window").addEventListener("change", (event) => {
       shown = PAGE_SIZE;
-      page.dispatch({ type: "set", changes: { inWindow: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
+      page.dispatch({ type: "list", changes: { inWindow: /** @type {HTMLInputElement} */ (event.target).checked } }, renderHistory);
     });
     page.narrow.addEventListener("change", () => {
       if (page.link.route.kind === "runs") renderHistory();

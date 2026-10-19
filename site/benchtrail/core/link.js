@@ -44,9 +44,20 @@
  */
 
 /**
- * The page a link opens: the overview, the full list of runs, or one chart, named by its chart id
- * (see `chartId` in the view).
- * @typedef {{ kind: "overview" } | { kind: "runs" } | { kind: "chart", chart: string }} Route
+ * How the runs page lists runs: its search, whether it keeps to runs with a change or to the zoom
+ * window, and its sort.
+ * @typedef {object} RunList
+ * @property {string} query
+ * @property {boolean} onlyChanges
+ * @property {boolean} inWindow
+ * @property {Sort | null} sort
+ */
+
+/**
+ * The page a link opens: the overview, the list of runs as it is searched and sorted, or one
+ * chart, named by its chart id (see `chartId` in the view).
+ * The list's choices belong to its page, so no other page can carry them unseen.
+ * @typedef {{ kind: "overview" } | { kind: "runs", list: RunList } | { kind: "chart", chart: string }} Route
  */
 
 /** @typedef {"30" | "100" | "all"} RangeKey */
@@ -76,10 +87,6 @@
  * @property {boolean} more whether readouts show their detailed columns
  * @property {boolean} allCharts
  * @property {ChangesKey} changes
- * @property {string} query the run list's search
- * @property {boolean} onlyChanges
- * @property {boolean} inWindow whether the run list keeps to the zoom window
- * @property {Sort | null} sort
  */
 
 /** The run counts a link can limit the page to, newest runs last. */
@@ -128,11 +135,15 @@ export function emptyLink() {
     more: false,
     allCharts: false,
     changes: "closed",
-    query: "",
-    onlyChanges: false,
-    inWindow: false,
-    sort: null,
   };
+}
+
+/**
+ * The runs page as it first opens: every run, newest first.
+ * @returns {Route}
+ */
+export function runsRoute() {
+  return { kind: "runs", list: { query: "", onlyChanges: false, inWindow: false, sort: null } };
 }
 
 /**
@@ -273,7 +284,7 @@ const CODECS = [
     read: (q, link) => {
       const chart = q.get("chart");
       if (chart) link.route = { kind: "chart", chart };
-      else link.route = q.get("page") === "runs" ? { kind: "runs" } : { kind: "overview" };
+      else link.route = q.get("page") === "runs" ? runsRoute() : { kind: "overview" };
     },
     write: (link) => {
       const route = link.route;
@@ -443,26 +454,30 @@ const CODECS = [
     write: (link) => (link.changes === "closed" ? [] : [["changes", link.changes]]),
   },
   {
-    // The run list's search, sort, and window only count on the runs page.
+    // The run list's search, sort, and window belong to the runs page, and come last in its link.
     keys: ["q", "only", "sort", "order", "in"],
     read: (q, link) => {
-      link.query = q.get("q") ?? "";
-      link.onlyChanges = q.get("only") === "changes";
+      if (link.route.kind !== "runs") return;
       const line = q.get("sort");
-      link.sort = line ? { line, order: q.get("order") === "best" ? "best" : "worst" } : null;
-      link.inWindow = q.get("in") === "window";
+      link.route.list = {
+        query: q.get("q") ?? "",
+        onlyChanges: q.get("only") === "changes",
+        inWindow: q.get("in") === "window",
+        sort: line ? { line, order: q.get("order") === "best" ? "best" : "worst" } : null,
+      };
     },
     write: (link) => {
       if (link.route.kind !== "runs") return [];
+      const list = link.route.list;
       /** @type {Array<[string, string]>} */
       const pairs = [];
-      if (link.query.trim()) pairs.push(["q", link.query.trim()]);
-      if (link.onlyChanges) pairs.push(["only", "changes"]);
-      if (link.sort) {
-        pairs.push(["sort", link.sort.line]);
-        if (link.sort.order !== "worst") pairs.push(["order", link.sort.order]);
+      if (list.query.trim()) pairs.push(["q", list.query.trim()]);
+      if (list.onlyChanges) pairs.push(["only", "changes"]);
+      if (list.sort) {
+        pairs.push(["sort", list.sort.line]);
+        if (list.sort.order !== "worst") pairs.push(["order", list.sort.order]);
       }
-      if (link.inWindow) pairs.push(["in", "window"]);
+      if (list.inWindow) pairs.push(["in", "window"]);
       return pairs;
     },
   },
