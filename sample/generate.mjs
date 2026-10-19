@@ -79,15 +79,36 @@ const EVENTS = [
   { at: 203, subject: "fix(codegen): drop the unused From impls for tagged enums", scale: { cpu: 0.93 }, only: ["okta"] },
 ];
 
-// The compile-cost suite mirrors progeny's `customSmallerIsBetter` output: one entry per document
-// and metric, named `<document>.<strategy> <metric>`.
+// The compile-cost suite mirrors progeny's `customSmallerIsBetter` output: one entry per document,
+// strategy, and metric, typed through `extra`.
+// A fourth document joins at run 60 and a second strategy at run 90, so the matrix grows over time.
 const DOCUMENTS = [
-  { name: "petstore-31", cpu: 0.68, rss: 334 },
-  { name: "oxide", cpu: 9.0, rss: 1251 },
-  { name: "okta", cpu: 26.3, rss: 3012 },
+  { name: "petstore-31", cpu: 0.68, rss: 334, from: 0 },
+  { name: "oxide", cpu: 9.0, rss: 1251, from: 0 },
+  { name: "okta", cpu: 26.3, rss: 3012, from: 0 },
+  { name: "stripe", cpu: 41.2, rss: 4630, from: 60 },
+];
+const STRATEGIES = [
+  { name: "hand-written", cpu: 1, rss: 1, from: 0 },
+  { name: "generated", cpu: 0.82, rss: 1.14, from: 90 },
 ];
 
-// The throughput suite mirrors a `cargo bench` suite: names without a metric part, one shared unit.
+// The pipeline suite has two phases with unrelated dimensions, so it shows as two sections.
+// Build benchmarks gain a `threads` dimension at run 60; the single-threaded ones keep their
+// benchmark id, which carries their history across that boundary.
+const INPUTS = [
+  { name: "petstore-31", ns: 52_000 },
+  { name: "okta", ns: 7_400_000 },
+  { name: "stripe", ns: 11_900_000 },
+];
+const TARGETS = [
+  { name: "x86_64-linux", s: 38, mib: 21 },
+  { name: "aarch64-darwin", s: 31, mib: 18 },
+];
+const THREADS_FROM = 60;
+
+// The throughput suite mirrors an untyped `cargo bench` suite: each name is the benchmark's only
+// dimension, and every entry shares one unit.
 const PARSERS = [
   { name: "parse/petstore-31", ns: 41_800 },
   { name: "parse/oxide", ns: 2_310_000 },
@@ -104,8 +125,10 @@ const applyEvent = (event, document, metric) => {
 };
 
 const compile = [];
+const pipeline = [];
 const throughput = [];
 let toolchain = "rustc 1.94.1 (e408947bf 2026-03-25)";
+let rustc = "1.94.1";
 let time = START;
 
 for (let run = 0; run < RUNS; run += 1) {
@@ -115,7 +138,12 @@ for (let run = 0; run < RUNS; run += 1) {
       if (event) applyEvent(event, document.replace(/^(parse|resolve)\//, ""), metric);
     }
   }
-  if (event?.toolchain) toolchain = event.toolchain;
+  if (event?.toolchain) {
+    toolchain = event.toolchain;
+    rustc = toolchain.split(" ")[1];
+  }
+  const runner = run < 100 ? "ubuntu-24.04" : "ubuntu-26.04";
+  const environment = { rustc, runner };
 
   // Pushes to main cluster on weekdays, a few hours apart.
   time += Math.round(random() < 0.35 ? DAY * (1 + Math.floor(random() * 2)) : 3_600_000 * (1 + random() * 7));
@@ -134,18 +162,60 @@ for (let run = 0; run < RUNS; run += 1) {
   };
   const date = time;
 
+  // The action keeps `extra` as a string, so typed metadata travels as JSON text.
+  const typed = (benchmarkId, dimensions, metric, text) =>
+    JSON.stringify({ benchtrail: { version: 1, benchmarkId, dimensions, metric, environment }, ...(text ? { text } : {}) });
+
   const benches = [];
-  for (const doc of DOCUMENTS) {
-    // Runner noise is a little over 1% on CPU time and well under that on peak RSS.
-    const cpu = doc.cpu * factor(`${doc.name} cpu`) * (1 + gauss() * 0.012);
-    const rss = doc.rss * factor(`${doc.name} peak rss`) * (1 + gauss() * 0.003);
-    const extra = `3 kept, 0 discarded, ${toolchain}`;
-    benches.push(
-      { name: `${doc.name}.hand-written cpu`, value: cpu, range: `± ${(cpu * 0.004).toFixed(2)}`, unit: "s", extra },
-      { name: `${doc.name}.hand-written peak rss`, value: rss, range: `± ${(rss * 0.001).toFixed(1)}`, unit: "MiB", extra },
-    );
+  for (const doc of DOCUMENTS.filter((d) => run >= d.from)) {
+    for (const strategy of STRATEGIES.filter((s) => run >= s.from)) {
+      // Runner noise is a little over 1% on CPU time and well under that on peak RSS.
+      const cpu = doc.cpu * strategy.cpu * factor(`${doc.name} cpu`) * (1 + gauss() * 0.012);
+      const rss = doc.rss * strategy.rss * factor(`${doc.name} peak rss`) * (1 + gauss() * 0.003);
+      const id = `compile/${doc.name}/${strategy.name}`;
+      const dimensions = { document: doc.name, strategy: strategy.name };
+      benches.push(
+        {
+          name: `${doc.name}.${strategy.name} cpu`,
+          value: cpu,
+          range: `± ${(cpu * 0.004).toFixed(2)}`,
+          unit: "s",
+          extra: typed(id, dimensions, { id: "cpu_time", direction: "lower" }, `3 kept, 0 discarded, ${toolchain}`),
+        },
+        {
+          name: `${doc.name}.${strategy.name} peak rss`,
+          value: rss,
+          range: `± ${(rss * 0.001).toFixed(1)}`,
+          unit: "MiB",
+          extra: typed(id, dimensions, { id: "peak_rss", direction: "lower" }, `3 kept, 0 discarded, ${toolchain}`),
+        },
+      );
+    }
   }
   compile.push({ commit, date, tool: "customSmallerIsBetter", benches });
+
+  const phases = [];
+  for (const input of INPUTS) {
+    const ns = Math.round(input.ns * factor(`${input.name} ns/iter`) * (1 + gauss() * 0.02));
+    phases.push({ name: `parse ${input.name}`, value: ns, unit: "ns", extra: typed(undefined, { input: input.name }, { id: "parse_time" }) });
+  }
+  for (const target of TARGETS) {
+    for (const opt of [0, 3]) {
+      for (const threads of run < THREADS_FROM ? [null] : [1, 8]) {
+        const speed = threads === 8 ? 0.31 : 1;
+        const s = target.s * (opt === 3 ? 1.9 : 1) * speed * factor(`okta cpu`) * (1 + gauss() * 0.015);
+        const mib = target.mib * (opt === 3 ? 0.62 : 1) * (1 + gauss() * 0.001);
+        const dimensions = { target: target.name, opt_level: opt, ...(threads === null ? {} : { threads }) };
+        const id = threads === 8 ? `build/${target.name}/O${opt}/t8` : `build/${target.name}/O${opt}`;
+        const name = `build ${target.name} O${opt}${threads === 8 ? " t8" : ""}`;
+        phases.push(
+          { name: `${name} wall`, value: s, unit: "s", extra: typed(id, dimensions, { id: "wall_time" }) },
+          { name: `${name} size`, value: mib, unit: "MiB", extra: typed(id, dimensions, { id: "binary_size" }) },
+        );
+      }
+    }
+  }
+  pipeline.push({ commit, date: date + 60_000, tool: "customSmallerIsBetter", benches: phases });
 
   throughput.push({
     commit,
@@ -159,12 +229,42 @@ for (let run = 0; run < RUNS; run += 1) {
   });
 }
 
+// A large suite, so the page is exercised past the happy path: hundreds of benchmarks across four
+// dimensions, long names, and a feature dimension that grows a value halfway through.
+const stress = [];
+const CRATES = Array.from({ length: 14 }, (_, i) => `crate-${["core", "serde", "tokio", "hyper", "regex", "syn", "quote", "rand", "clap", "tracing", "rayon", "bytes", "axum", "very-long-crate-name-for-wrapping"][i]}`);
+const FEATURES = ["default", "full", "minimal", "no-std", "simd", "unstable-experimental"];
+for (let run = 0; run < compile.length; run += 1) {
+  const benches = [];
+  for (const [c, crate] of CRATES.entries()) {
+    for (const [f, feature] of FEATURES.entries()) {
+      if (feature === "unstable-experimental" && run < compile.length / 2) continue;
+      for (const profile of ["dev", "release"]) {
+        for (const threads of [1, 4, 16]) {
+          const base = (1 + c * 0.7) * (1 + f * 0.15) * (profile === "release" ? 2.4 : 1) / Math.sqrt(threads);
+          const step = run > 160 && crate === "crate-syn" && feature === "full" ? 1.18 : 1;
+          const value = base * step * (1 + gauss() * 0.01);
+          benches.push({
+            name: `${crate}/${feature}/${profile}/t${threads}`,
+            value,
+            unit: "s",
+            extra: JSON.stringify({ benchtrail: { version: 1, dimensions: { crate, feature, profile, threads }, metric: { id: "build_time" } } }),
+          });
+        }
+      }
+    }
+  }
+  stress.push({ commit: compile[run].commit, date: compile[run].date + 240_000, tool: "customSmallerIsBetter", benches });
+}
+
 const data = {
   lastUpdate: time + 180_000,
   repoUrl: REPO,
   entries: {
     "Generated-crate compile cost": compile,
+    "Pipeline": pipeline,
     "Parser throughput": throughput,
+    "Many benchmarks": stress,
   },
 };
 

@@ -23,6 +23,10 @@
   --better: #34c759;
   --better-text: #248a3d;
   --noise: #d1d1d6;
+  --shadow: rgba(0, 0, 0, 0.08);
+  --worse-wash: rgba(255, 59, 48, 0.07);
+  --better-wash: rgba(52, 199, 89, 0.08);
+  --mark: rgba(0, 122, 255, 0.14);
   --s1: #007aff;
   --s2: #f28a00;
   --s3: #00a9a1;
@@ -52,6 +56,10 @@
     --better: #30d158;
     --better-text: #30d158;
     --noise: #3a3a3c;
+    --shadow: rgba(0, 0, 0, 0.5);
+    --worse-wash: rgba(255, 69, 58, 0.12);
+    --better-wash: rgba(48, 209, 88, 0.1);
+    --mark: rgba(10, 132, 255, 0.3);
     --s1: #0a84ff;
     --s2: #d67800;
     --s3: #139e96;
@@ -79,6 +87,10 @@
   --better: #30d158;
   --better-text: #30d158;
   --noise: #3a3a3c;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --worse-wash: rgba(255, 69, 58, 0.12);
+  --better-wash: rgba(48, 209, 88, 0.1);
+  --mark: rgba(10, 132, 255, 0.3);
   --s1: #0a84ff;
   --s2: #d67800;
   --s3: #139e96;
@@ -128,7 +140,8 @@ a:hover {
 }
 
 h1,
-h2 {
+h2,
+h3 {
   margin: 0;
   font-weight: 600;
 }
@@ -151,21 +164,25 @@ button {
 .page {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 56px 40px 72px;
+  padding: 32px 40px 72px;
 }
 
 /* Header */
 
 .top {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
+  gap: 4px 16px;
 }
 
 .top h1 {
-  font-size: 22px;
+  font-size: 20px;
   letter-spacing: -0.015em;
+}
+
+.top .theme {
+  margin-left: auto;
 }
 
 .top h1 a {
@@ -177,7 +194,7 @@ button {
 }
 
 .meta {
-  margin: 4px 0 0;
+  margin: 0;
   color: var(--muted);
 }
 
@@ -194,7 +211,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 28px;
-  margin-top: 32px;
+  margin-top: 20px;
 }
 
 .controls {
@@ -203,7 +220,7 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px 32px;
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .filters,
@@ -211,7 +228,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 10px 32px;
+  gap: 12px 40px;
 }
 
 .options {
@@ -222,7 +239,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 16px;
+  gap: 6px 18px;
 }
 
 .filter-label {
@@ -256,6 +273,13 @@ button {
   font-size: 15px;
 }
 
+.sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin-top: 10px;
+}
+
 .line-key {
   display: inline-block;
   width: 12px;
@@ -271,16 +295,101 @@ button {
   background: repeating-linear-gradient(90deg, var(--key) 0 4px, transparent 4px 7px);
 }
 
+.line-key.dotted {
+  background: repeating-linear-gradient(90deg, var(--key) 0 2px, transparent 2px 4px);
+}
+
 .option[aria-pressed="false"] .line-key {
   opacity: 0.25;
+}
+
+/* Filter menus: a summary button over a panel of checkboxes */
+
+.menu {
+  position: relative;
+}
+
+.menu-button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink);
+}
+
+.menu-panel {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 8px);
+  left: -10px;
+  width: max-content;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--shadow);
+}
+
+.menu-search {
+  width: 100%;
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+}
+
+.menu-all {
+  display: block;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+
+.menu-item:hover,
+.menu-item:focus-within {
+  background: var(--hover);
+}
+
+.menu-item input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.menu-item label {
+  flex: 1;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.menu-item .only {
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0;
+}
+
+.menu-item:hover .only,
+.menu-item:focus-within .only {
+  opacity: 1;
+}
+
+.menu-item .only:hover {
+  color: var(--accent);
 }
 
 /* Sections */
 
 main {
   display: grid;
-  gap: 56px;
-  margin-top: 40px;
+  gap: 72px;
+  margin-top: 36px;
 }
 
 .trail-chart {
@@ -290,15 +399,17 @@ main {
 .charts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
-  gap: 48px 56px;
+  gap: 64px 64px;
 }
 
 .chart-card {
   min-width: 0;
 }
 
-.chart-card h2 {
+.chart-card h3 {
   font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .chart-card .note {
@@ -309,7 +420,107 @@ main {
 
 .chart {
   height: 260px;
+  margin-top: 14px;
+}
+
+/* Readout under each chart: one row per line, at the hovered or selected run. Fixed column
+   widths and tabular digits keep every row in place while the numbers change. */
+
+.readout-table {
+  width: 100%;
   margin-top: 12px;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.readout-table col.num {
+  width: 6.5em;
+}
+
+.readout-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.readout-table td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+}
+
+.readout-value {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* A row that regressed or improved at this run carries a faint wash of its verdict color. */
+.readout-table tr[data-verdict="worse"] td {
+  background: var(--worse-wash);
+}
+
+.readout-table tr[data-verdict="better"] td {
+  background: var(--better-wash);
+}
+
+.readout-table tr[data-verdict="worse"] td:first-child,
+.readout-table tr[data-verdict="better"] td:first-child {
+  color: var(--ink);
+}
+
+.readout-table td:first-child,
+.readout-table th:first-child {
+  padding-left: 8px;
+}
+
+.readout-table td:last-child,
+.readout-table th:last-child {
+  padding-right: 8px;
+}
+
+.readout-more {
+  margin-top: 8px;
+  padding-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.readout-more:hover {
+  color: var(--ink);
+}
+
+/* Small multiples: one heading per metric over a grid of compact charts */
+
+.charts.is-faceted {
+  grid-template-columns: 1fr;
+  gap: 72px;
+}
+
+.metric-group h2 {
+  font-size: 15px;
+}
+
+.metric-group h2 .note {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.multiples {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 48px 48px;
+  margin-top: 24px;
+}
+
+.multiples .chart-card h3 {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.multiples .chart {
+  height: 180px;
+  margin-top: 8px;
 }
 
 .empty {
@@ -317,28 +528,34 @@ main {
   color: var(--muted);
 }
 
-/* Details: one fixed shape for every run, so hovering never moves the layout */
+/* Run bar: which run the charts show, kept on screen while they scroll */
 
-.details {
-  max-width: 760px;
+.charts-area {
+  display: grid;
+  gap: 32px;
+}
+
+.run-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 -12px;
+  padding: 12px 12px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
 }
 
 .run-head {
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
   white-space: nowrap;
 }
 
-.run-head .facts {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--muted);
-}
-
 .run-head .step {
   color: var(--muted);
+  font-size: 15px;
 }
 
 .run-head .step:hover:not(:disabled) {
@@ -350,23 +567,77 @@ main {
   cursor: default;
 }
 
+.run-head .sha {
+  margin-left: 4px;
+}
+
 .run-subject {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  min-height: calc(2 * 1.4em);
-  margin: 10px 0 0;
-  font-size: 17px;
+  text-overflow: ellipsis;
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tally {
+  display: inline-flex;
+  gap: 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tally .change {
+  min-width: 0;
+}
+
+.run-bar .more-toggle {
+  font-size: 13px;
+}
+
+.run-facts {
+  overflow: hidden;
+  margin-top: 2px;
+  padding-left: 56px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.run-facts .boundary {
+  margin-left: 12px;
+  color: var(--ink-2);
+}
+
+.run-facts .boundary::before {
+  content: "Environment: ";
+  color: var(--muted);
+}
+
+/* Commit message of the selected run */
+
+.message {
+  min-width: 0;
+}
+
+.message-head {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.message-subject {
+  margin-top: 6px;
+  font-size: 17px;
   line-height: 1.4;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 
 .run-body {
-  max-height: 12em;
-  overflow: auto;
+  max-width: 80ch;
   margin: 12px 0 0;
   color: var(--ink-2);
   white-space: pre-wrap;
@@ -374,8 +645,149 @@ main {
 }
 
 .run-extra {
-  margin: 8px 0 0;
+  margin: 12px 0 0;
   color: var(--muted);
+  font-size: 13px;
+}
+
+/* Changes: the latest runs that regressed or improved */
+
+.changes-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  text-align: left;
+}
+
+.changes-toggle:disabled {
+  cursor: default;
+}
+
+.changes-toggle .toggle-icon {
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  margin-right: -8px;
+  color: var(--muted);
+}
+
+.changes-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.changes-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.changes-counts .change {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.change-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change-run {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 24px;
+  margin: 0 -12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.change-run + .change-run {
+  border-top: 1px solid var(--grid);
+}
+
+.change-run:hover,
+.change-run[aria-selected="true"] {
+  background: var(--hover);
+}
+
+.change-run .subject {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.change-run .when {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.change-run .moves {
+  grid-column: 1 / -1;
+}
+
+.moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 13px;
+}
+
+.move {
+  overflow-wrap: anywhere;
+}
+
+.history-table td.moves-cell {
+  white-space: normal;
+  text-align: left;
+}
+
+.history-table td.moves-cell .change {
+  display: inline-block;
+  font-size: inherit;
+}
+
+.move .change {
+  min-width: 0;
+  margin-right: 6px;
+  font-weight: 600;
+}
+
+.move .what {
+  color: var(--ink-2);
+}
+
+.move .metric {
+  margin-left: 5px;
+  color: var(--muted);
+}
+
+.overview {
+  display: grid;
+  gap: 20px;
+}
+
+/* Grid items default to their content's width, and a drawn chart would then hold its grid open
+   after the window narrows. */
+main > *,
+.overview > *,
+.charts-area > *,
+.charts > *,
+.multiples > * {
+  min-width: 0;
+}
+
+.changes-more {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.changes-more:hover {
+  color: var(--ink);
 }
 
 /* Tables */
@@ -391,7 +803,7 @@ table {
 
 th,
 td {
-  padding: 8px 0 8px 32px;
+  padding: 10px 0 10px 28px;
   text-align: right;
   white-space: nowrap;
   vertical-align: baseline;
@@ -405,49 +817,13 @@ td:first-child {
 
 thead th {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
   border-bottom: 1px solid var(--rule);
 }
 
 tbody tr + tr td {
   border-top: 1px solid var(--grid);
-}
-
-.run-table {
-  width: 100%;
-  margin-top: 20px;
-  table-layout: fixed;
-}
-
-.run-table col.num {
-  width: 18%;
-}
-
-.run-table .group td {
-  padding-top: 20px;
-  color: var(--muted);
-  font-size: 13px;
-  border-top: 0;
-}
-
-.run-table td:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.details:not(.is-expanded) .more-only {
-  display: none;
-}
-
-.more-toggle {
-  margin-top: 16px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.more-toggle:hover {
-  color: var(--ink);
 }
 
 .change {
@@ -465,10 +841,42 @@ tbody tr + tr td {
   color: var(--better-text);
 }
 
+.icon {
+  width: 0.85em;
+  height: 0.85em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.05em;
+}
+
 .change .icon {
-  display: inline-block;
-  width: 1.1em;
-  font-size: 0.75em;
+  margin-right: 3px;
+  stroke-width: 2.2;
+}
+
+.run-head .step .icon {
+  width: 15px;
+  height: 15px;
+  vertical-align: -2px;
+}
+
+.menu-button .chevron {
+  width: 10px;
+  height: 10px;
+  color: var(--muted);
+}
+
+.sort-icon {
+  margin-left: 4px;
+}
+
+mark {
+  background: var(--mark);
+  color: inherit;
+  border-radius: 2px;
 }
 
 /* Runs list */
@@ -551,6 +959,16 @@ tbody tr + tr td {
   color: var(--muted);
 }
 
+.notes-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+}
+
+.notes-list li + li {
+  margin-top: 4px;
+}
+
 .problem {
   margin-top: 40px;
 }
@@ -584,8 +1002,40 @@ tbody tr + tr td {
     padding-left: 16px;
   }
 
-  .run-table col.num {
-    width: 24%;
+  .readout-table col.num {
+    width: 5.5em;
+  }
+
+  .run-facts {
+    padding-left: 0;
+  }
+
+  .change-run {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The runs table stacks each run's changes under its commit. */
+  .history-table thead {
+    display: none;
+  }
+
+  .history-table tr,
+  .history-table td {
+    display: block;
+  }
+
+  .history-table td.moves-cell {
+    padding: 0 0 12px;
+    border-top: 0;
+  }
+
+  .history-table td:first-child {
+    min-width: 0;
+    padding-bottom: 6px;
+  }
+
+  .tally {
+    display: none;
   }
 }
 

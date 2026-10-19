@@ -25,14 +25,20 @@
       - "title": heading text; defaults to the repository name from the data.
       - "dataUrl": the history script; a same-origin `?data=` query parameter overrides it.
       - "threshold": relative change that counts as a regression or improvement.
-      - "labels": display names for metrics, keyed by the metric part of a benchmark name.
-      - "split": regex with `series` and `metric` groups that splits a benchmark name.
+
+      These apply to every suite at the top level, or to one suite under "suites": { "<name>": { … } }:
+      - "names": regex whose named groups read dimensions out of an untyped benchmark name; a group
+        called `metric` names the metric, e.g. "^(?<document>[^.]+)\\.(?<strategy>\\S+) (?<metric>.+)$".
+      - "label": template for a benchmark's label, e.g. "{{document}} / {{strategy}}".
+      - "metrics": by metric id, { "label", "direction": "lower" | "higher", "unit" }.
+      - "dimensions": by dimension name, { "label", "order" }.
+      - "colorBy", "dashBy": the dimension that colors or dashes the lines by default.
+      - "ignoreEnvironment": environment names whose changes still allow comparing runs.
     -->
     <script id="benchtrail-config" type="application/json">
       {
         "dataUrl": "data.js",
-        "threshold": 0.05,
-        "labels": {}
+        "threshold": 0.05
       }
     </script>
     <script type="module" src="benchtrail.js"></script>
@@ -42,15 +48,13 @@
       <header>
         <div class="top">
           <h1><a id="project-link">Benchmarks</a></h1>
+          <p id="summary" class="meta"></p>
           <button type="button" id="theme" class="theme">Theme: auto</button>
         </div>
-        <p id="summary" class="meta"></p>
-        <nav id="suites" class="suites" aria-label="Benchmark suites" hidden></nav>
+        <nav id="suites" class="suites" role="tablist" aria-label="Benchmark suites" hidden></nav>
+        <nav id="sections" class="sections" role="tablist" aria-label="Benchmark groups" hidden></nav>
         <div id="controls" class="controls" hidden>
-          <div class="filters">
-            <div class="filter" role="group" aria-label="Series" id="series"></div>
-            <div class="filter" role="group" aria-label="Metrics" id="metrics"></div>
-          </div>
+          <div id="filters" class="filters"></div>
           <button type="button" id="options-toggle" class="option" aria-expanded="false" aria-controls="options">Options</button>
         </div>
         <div id="options" class="options" hidden>
@@ -66,13 +70,27 @@
             <span class="filter-label" id="axis-label">X axis</span>
             <span id="axis" class="filter"></span>
           </div>
+          <div class="filter" role="radiogroup" aria-labelledby="color-label" id="color-group">
+            <span class="filter-label" id="color-label">Color</span>
+            <span id="color" class="filter"></span>
+          </div>
+          <div class="filter" role="radiogroup" aria-labelledby="dash-label" id="dash-group">
+            <span class="filter-label" id="dash-label">Line style</span>
+            <span id="dash" class="filter"></span>
+          </div>
         </div>
       </header>
 
       <main id="main" hidden>
-        <div id="trail-chart" class="trail-chart" role="img" aria-label="Largest change per run"></div>
-        <section id="charts" class="charts" aria-label="Charts"></section>
-        <section id="selected" class="details" aria-live="polite"></section>
+        <div class="overview">
+          <div id="trail-chart" class="trail-chart" role="img" aria-label="Largest change per run"></div>
+          <section id="changes" class="changes" aria-label="Recent changes"></section>
+        </div>
+        <div class="charts-area">
+          <div id="run-bar" class="run-bar" aria-live="polite"></div>
+          <section id="charts" class="charts" aria-label="Charts"></section>
+        </div>
+        <section id="selected" class="message" aria-label="Selected commit"></section>
         <section>
           <div class="history-head">
             <button type="button" id="list-toggle" class="option" aria-expanded="false" aria-controls="history">Show runs</button>
@@ -86,6 +104,7 @@
             <button type="button" id="more" class="more" hidden></button>
           </div>
         </section>
+        <section id="notes" class="notes" aria-label="Problems reading the history" hidden></section>
       </main>
 
       <div id="problem" class="problem" role="alert" hidden></div>

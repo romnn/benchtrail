@@ -40,11 +40,34 @@ for (let i = 0; i < 24; i += 1) {
   });
 }
 
+// Typed payloads that are malformed, conflicting, or unusual, each of which the page must report or
+// render without merging it into a good history.
+const typed = (benchtrail, text) => JSON.stringify({ benchtrail, ...(text ? { text } : {}) });
+const typedRuns = runs.map((run, i) => ({
+  ...run,
+  benches: [
+    // `4` and `"4"` are different values, and a value may contain a comma.
+    { name: "mix int", value: 1 + i * 0.01, unit: "s", extra: typed({ version: 1, dimensions: { threads: 4, mode: "a,b" }, metric: { id: "time" } }) },
+    { name: "mix str", value: 1.2, unit: "s", extra: typed({ version: 1, dimensions: { threads: "4", mode: "c" }, metric: { id: "time" } }) },
+    // A dimension holding an array is invalid and must stay apart, shown by name.
+    { name: "bad dims", value: 2, unit: "s", extra: typed({ version: 1, dimensions: { threads: [1] }, metric: { id: "time" } }) },
+    // An unsupported version is reported, not guessed at.
+    { name: "future", value: 3, unit: "s", extra: typed({ version: 2, dimensions: {}, metric: { id: "time" } }) },
+    // The same metric declared as higher and lower is better leaves its verdicts unknown.
+    { name: "score", value: 50 + (i % 4), unit: "pts", extra: typed({ version: 1, dimensions: { threads: 4, mode: "c" }, metric: { id: "score", direction: i < 12 ? "higher" : "lower" } }) },
+    // Text that only looks like JSON stays plain text.
+    { name: "text", value: 0.5, unit: "s", extra: "{not json, rustc 1.99" },
+    // Recorded twice in one run: the first value counts and the duplicate is reported.
+    ...(i === 9 ? [{ name: "mix int", value: 99, unit: "s", extra: typed({ version: 1, dimensions: { threads: 4, mode: "a,b" }, metric: { id: "time" } }) }] : []),
+  ],
+}));
+
 const data = {
   lastUpdate: start + 24 * 3_600_000,
   repoUrl: REPO,
   entries: {
     "Edge cases": runs,
+    "Typed edge cases": typedRuns,
     "One run": [runs[0]],
   },
 };
