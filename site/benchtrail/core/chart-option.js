@@ -40,7 +40,7 @@ import { displayUnit, formatDate, formatTick, timeFormat } from "./format.js";
  * @property {{ start: number, end: number }} zoom
  * @property {() => { first: number, last: number }} window the positions of the first and last run in the zoom window
  * @property {Theme} theme
- * @property {Map<string, { key: string, values: Array<number | null> }>} smoothCache smoothed values by line, kept across renders
+ * @property {Map<string, { key: string, values: Array<number | null> }>} smoothCache smoothed values by suite and line, kept across renders
  */
 
 const LOG_SPAN = 20;
@@ -99,6 +99,7 @@ export function trailOption(plot, width) {
 
 // Smoothed values are cached per line for the inputs they depend on, so a render that changes
 // nothing about a line, such as toggling another filter, does not smooth it again.
+// A line's key is unique only within its suite, so the cache names the suite too.
 /**
  * @param {Plot} plot
  * @param {Line} line
@@ -108,10 +109,11 @@ export function trailOption(plot, width) {
  */
 function smoothedCached(plot, line, ys, factor, base) {
   const key = `${plot.smoothing}|${plot.scale}|${plot.view.offset}|${plot.view.runs.length}|${factor}|${base}`;
-  const cached = plot.smoothCache.get(line.key);
+  const id = `${plot.view.suite.name}\u0000${line.key}`;
+  const cached = plot.smoothCache.get(id);
   if (cached?.key === key) return cached.values;
   const values = smoothed(plot.view.runs, line, ys, plot.smoothing);
-  plot.smoothCache.set(line.key, { key, values });
+  plot.smoothCache.set(id, { key, values });
   return values;
 }
 
