@@ -208,6 +208,11 @@ The remaining keys apply to every suite at the top level, or to one suite under 
   come first.
 - `colorBy` and `dashBy` name the dimension that colors or dashes the lines by default.
 - `ignoreEnvironment` lists environment names whose changes still allow comparing runs.
+- `splitEnvironment` lists environment names that split each benchmark into one series per value,
+  such as the CPU model of a pool of hosted runners whose hardware changes from run to run.
+  Each value then has its own history and change detection, and the name works as a dimension in
+  filters, `colorBy`, `dashBy`, `label`, and links.
+  Runs recorded before the name was show as `unknown`, in a series of their own.
 - `smoothing` is the default smoothing window in runs: `0` (off, the default), `5`, `11` or `21`.
   Charts then draw the rolling median as a line over the raw values.
 
@@ -251,7 +256,7 @@ Inside `benchtrail`:
 | `metric.label`     | no       | The metric's display name.                                                                                                                                                                                                   |
 | `metric.direction` | no       | `"lower"`, `"higher"` or `"unknown"`. Without it, the `metrics` setting or the github-action-benchmark tool decides.                                                                                                         |
 | `dimensions`       | no       | Names mapped to strings, finite numbers or booleans. With the metric, they identify the benchmark; `4` and `"4"` differ.                                                                                                     |
-| `environment`      | no       | Names mapped to the same scalar types, such as a compiler version. A change starts a new segment, so no verdict compares across it. |
+| `environment`      | no       | Names mapped to the same scalar types, such as a compiler version. A change starts a new segment, so no verdict compares across it, unless the `splitEnvironment` setting makes the name a series of its own. |
 | `benchmarkId`      | no       | A non-empty string that keeps one benchmark's history together while its dimensions change.                                          |
 
 A run records each benchmark once per metric: one value per set of dimensions, or per
@@ -259,6 +264,9 @@ A run records each benchmark once per metric: one value per set of dimensions, o
 Variants measured side by side in one run, such as the same benchmark on two operating systems,
 belong in `dimensions`, not in `environment`; entries that differ only in their environment are
 reported as duplicates and only the first is kept.
+Hardware a run happens to get, such as a hosted runner's CPU, belongs in `environment`, with the
+`splitEnvironment` setting naming it, so the runs recorded before it read as unknown rather than
+as a different benchmark.
 
 An optional `text` string next to `benchtrail` appears as a note on the selected run.
 Unknown keys are ignored, so later additions stay readable.
