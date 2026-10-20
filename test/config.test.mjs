@@ -12,7 +12,10 @@ test("settings that hold are kept as given", () => {
     title: "Compile cost",
     threshold: 0.1,
     names: "^(?<document>[^.]+) (?<metric>.+)$",
-    metrics: { "peak rss": { label: "Peak RSS", direction: "lower", unit: "MiB" } },
+    metrics: {
+      "peak rss": { label: "Peak RSS", direction: "lower", unit: "MiB" },
+      instructions: { order: -1, splitEnvironment: [], ignoreEnvironment: ["cpu"] },
+    },
     dimensions: { document: { label: "Document", order: 1 } },
     colorBy: "document",
     ignoreEnvironment: ["rustc"],
@@ -26,6 +29,7 @@ test("settings that hold are kept as given", () => {
   const settings = suiteSettings(config, "main");
   assert.equal(settings.names.exec("okta cpu").groups.document, "okta");
   assert.deepEqual(settings.metrics.get("peak rss"), { label: "Peak RSS", direction: "lower", unit: "MiB" });
+  assert.deepEqual(settings.metrics.get("instructions"), { order: -1, splitEnvironment: [], ignoreEnvironment: ["cpu"] });
   assert.equal(settings.dimensions.get("document").order, 1);
   assert.deepEqual([...settings.ignoreEnvironment], ["rustc"]);
   assert.deepEqual([...settings.splitEnvironment], ["cpu"]);
@@ -44,7 +48,7 @@ test("a value that breaks a rule is left out and reported by its path", () => {
   const config = readConfig({
     threshold: -1,
     names: "(?<broken",
-    metrics: { "peak rss": { direction: "down", color: "red" }, cpu: "fast" },
+    metrics: { "peak rss": { direction: "down", color: "red", order: "first", splitEnvironment: "cpu" }, cpu: "fast" },
     dimensions: { document: { order: "first" } },
     splitEnvironment: "cpu",
     smoothing: 7,
@@ -55,6 +59,8 @@ test("a value that breaks a rule is left out and reported by its path", () => {
     "The setting `names` is not a valid regular expression: Invalid regular expression: /(?<broken/: Invalid capture group name.",
     'The setting `metrics["peak rss"].direction` must be "lower" or "higher".',
     'The setting `metrics["peak rss"].color` is not a metric setting.',
+    'The setting `metrics["peak rss"].order` must be a number.',
+    'The setting `metrics["peak rss"].splitEnvironment` must be a list of environment names.',
     "The setting `metrics.cpu` must be an object.",
     "The setting `dimensions.document.order` must be a number.",
     "The setting `splitEnvironment` must be a list of environment names.",

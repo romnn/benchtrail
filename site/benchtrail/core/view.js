@@ -110,6 +110,9 @@ export const DASHES = /** @type {const} */ (["solid", "dashed", "dotted"]);
 
 const NO_COUNTS = Object.freeze({ worse: 0, better: 0, moved: 0, measured: 0 });
 
+// The facet token of a dimension that does not apply to a trace, which no value's token can equal.
+const INAPPLICABLE = "\u0000inapplicable";
+
 // Resolving a link
 
 /**
@@ -344,6 +347,8 @@ export function choosePivot(section, link) {
 
 // A line's color comes from its value of the color dimension and its dash from the dash
 // dimension, both by the value's fixed position, so filtering never repaints the lines that stay.
+// A trace the dimension does not apply to takes the position after every value, so it never
+// looks like one of them, and its label leaves the dimension out.
 /**
  * @param {Trace} trace
  * @param {Pivot} pivot
@@ -353,11 +358,15 @@ export function choosePivot(section, link) {
 function lineStyle(trace, pivot, dimsByKey) {
   const colorDim = pivot.color ? dimsByKey.get(pivot.color) : undefined;
   const dashDim = pivot.dash ? dimsByKey.get(pivot.dash) : undefined;
-  const position = (/** @type {Dimension | undefined} */ d) => (d ? (d.byToken.get(token(trace.dims[d.key]))?.index ?? 0) : 0);
+  const position = (/** @type {Dimension | undefined} */ d) => {
+    if (!d) return 0;
+    if (trace.inapplicable.has(d.key)) return d.values.length;
+    return d.byToken.get(token(trace.dims[d.key]))?.index ?? 0;
+  };
   const colorIndex = position(colorDim);
   let dashIndex = position(dashDim);
   if (!dashDim && colorIndex >= SLOTS) dashIndex = 1;
-  const parts = [colorDim, dashDim].flatMap((d) => (d ? [valueText(d, trace.dims[d.key])] : []));
+  const parts = [colorDim, dashDim].flatMap((d) => (d && !trace.inapplicable.has(d.key) ? [valueText(d, trace.dims[d.key])] : []));
   return {
     slot: colorIndex % SLOTS,
     colorIndex,
@@ -437,10 +446,12 @@ export function buildView(suites, link) {
   const scope = chartScope(link);
   const shows = (/** @type {Metric} */ metric) => (scope ? metric.slug === scope.metric : admits(link.metrics, metric.slug));
   const known = !scope || (found && [...scope.dims.keys()].every((key) => dimsByKey.has(key)));
-  const passes = (/** @type {Tags} */ dims) =>
+  // A dimension that does not apply to a trace never filters it out.
+  const passes = (/** @type {Trace} */ trace) =>
     known &&
     section.dims.every((d) => {
-      const text = urlText(dims[d.key]);
+      if (trace.inapplicable.has(d.key)) return true;
+      const text = urlText(trace.dims[d.key]);
       const fixed = scope?.dims.get(d.key);
       return fixed === undefined ? admits(link.dimensions.get(d.key), text) : fixed === text;
     });
@@ -452,16 +463,19 @@ export function buildView(suites, link) {
   const lines = [];
   for (const trace of section.traces) {
     const history = trace.history;
-    if (!shows(history.metric) || !passes(trace.dims)) continue;
+    if (!shows(history.metric) || !passes(trace)) continue;
     const points = [];
     for (const i of trace.own) if (i >= offset) points.push(i);
     if (!points.some((i) => history.values[i] !== null)) continue;
     const facetDims = pivot.facet.map((key) => /** @type {Dimension} */ (dimsByKey.get(key)));
-    const facetValues = facetDims.map((d) => /** @type {import("./history.js").DimensionValue} */ (d.byToken.get(token(trace.dims[d.key]))));
+    // A facet dimension that does not apply to the trace puts it in a chart after every value's.
+    const facetValues = facetDims.map((d) =>
+      trace.inapplicable.has(d.key) ? null : /** @type {import("./history.js").DimensionValue} */ (d.byToken.get(token(trace.dims[d.key]))),
+    );
     const facet = {
-      token: facetValues.map((v) => v.token).join("\u0003"),
-      label: facetDims.map((d, i) => valueText(d, facetValues[i].value)).join(" / "),
-      order: facetValues.map((v) => v.index),
+      token: facetValues.map((v) => v?.token ?? INAPPLICABLE).join("\u0003"),
+      label: facetDims.flatMap((d, i) => (facetValues[i] ? [valueText(d, facetValues[i].value)] : [])).join(" / "),
+      order: facetValues.map((v, i) => v?.index ?? facetDims[i].values.length),
     };
     lines.push(makeLine(trace, points, lineStyle(trace, pivot, dimsByKey), facet));
   }

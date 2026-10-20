@@ -6,7 +6,15 @@ import { SMOOTHING } from "./link.js";
 
 /**
  * A metric's settings.
- * @typedef {{ label?: string, direction?: "lower" | "higher", unit?: string }} MetricSettings
+ * `order` places its charts, lower first; `splitEnvironment` and `ignoreEnvironment` replace the
+ * suite's lists for this metric alone.
+ * @typedef {object} MetricSettings
+ * @property {string} [label]
+ * @property {"lower" | "higher"} [direction]
+ * @property {string} [unit]
+ * @property {number} [order]
+ * @property {string[]} [splitEnvironment]
+ * @property {string[]} [ignoreEnvironment]
  */
 
 /**
@@ -189,6 +197,12 @@ function readSettings(raw, at, report) {
             } else if (field === "direction") {
               if (given === "lower" || given === "higher") checked.direction = given;
               else report([...where, field], 'must be "lower" or "higher"');
+            } else if (field === "order") {
+              if (typeof given === "number" && Number.isFinite(given)) checked.order = given;
+              else report([...where, field], "must be a number");
+            } else if (field === "splitEnvironment" || field === "ignoreEnvironment") {
+              const names = environmentNames(given, [...where, field], report);
+              if (names) checked[field] = names;
             } else report([...where, field], "is not a metric setting");
           }
           return checked;
@@ -211,10 +225,11 @@ function readSettings(raw, at, report) {
         });
         break;
       case "ignoreEnvironment":
-      case "splitEnvironment":
-        if (Array.isArray(value) && value.every((name) => typeof name === "string")) settings[key] = value;
-        else report(path, "must be a list of environment names");
+      case "splitEnvironment": {
+        const names = environmentNames(value, path, report);
+        if (names) settings[key] = names;
         break;
+      }
       case "smoothing":
         if (SMOOTHING.some((option) => option.key === value)) settings.smoothing = /** @type {number} */ (value);
         else report(path, `must be one of ${SMOOTHING.map((option) => option.key).join(", ")}`);
@@ -285,6 +300,18 @@ function entries(value, path, report, read) {
     else report([...path, name], "must be an object");
   }
   return checked;
+}
+
+/**
+ * @param {unknown} value
+ * @param {readonly string[]} path
+ * @param {Report} report
+ * @returns {string[] | undefined}
+ */
+function environmentNames(value, path, report) {
+  if (Array.isArray(value) && value.every((name) => typeof name === "string")) return value;
+  report(path, "must be a list of environment names");
+  return undefined;
 }
 
 /**

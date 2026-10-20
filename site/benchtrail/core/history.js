@@ -33,6 +33,8 @@ import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
 
 /**
  * What was measured, keyed by id and unit family.
+ * `split` and `ignore` are the environment names it splits benchmarks by and compares runs across:
+ * its own settings' lists, or the suite's.
  * @typedef {object} Metric
  * @property {string} key
  * @property {string} id
@@ -43,6 +45,9 @@ import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
  * @property {Direction} direction
  * @property {string} label
  * @property {string} slug
+ * @property {number} order
+ * @property {Set<string>} split
+ * @property {Set<string>} ignore
  */
 
 /**
@@ -71,10 +76,14 @@ import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
 /**
  * The runs of one history recorded with one set of dimension values.
  * `own` holds the indices of those runs.
+ * `inapplicable` names the section's dimensions that do not apply to it: environment names other
+ * metrics split by and its own metric does not, such as the CPU for a count that does not depend
+ * on it, so filters, colors and labels pass it by rather than call its value unknown.
  * @typedef {object} Trace
  * @property {History} history
  * @property {Tags} dims
  * @property {Set<number>} own
+ * @property {Set<string>} inapplicable
  * @property {string} key
  * @property {string} label
  * @property {string} slug
@@ -335,7 +344,7 @@ export function buildSuite(name, rawRuns, settings, threshold) {
         note(`run ${runs[index].short} has an entry that is not an object; it is skipped.`);
         continue;
       }
-      const observation = splitEnvironment(readEntry(entry, settings, note), settings.splitEnvironment, String(entry.name ?? ""), note);
+      const observation = readEntry(entry, settings, note);
       observations.push({ index, entry, tool: raw.tool, unit: String(entry.unit ?? ""), ...observation });
     }
   }
@@ -345,8 +354,9 @@ export function buildSuite(name, rawRuns, settings, threshold) {
   const metrics = new Map();
   /** @type {Map<string, History>} */
   const histories = new Map();
-  for (const o of observations) {
-    const metric = metricFor(metrics, o.metricId, o.unit, settings);
+  for (const read of observations) {
+    const metric = metricFor(metrics, read.metricId, read.unit, settings);
+    const o = splitEnvironment(read, metric.split, String(read.entry.name ?? ""), note);
     if (o.metricLabel) metric.rowLabel = o.metricLabel;
     if (o.direction) metric.explicit.add(o.direction);
     else metric.implied.add(impliedDirection(o.tool, o.unit));
@@ -357,7 +367,7 @@ export function buildSuite(name, rawRuns, settings, threshold) {
     // The environment never takes part, so a history keeps its identity across a toolchain change,
     // apart from the names the settings split by, which are dimensions by now; under an explicit id
     // their values still split the history, as they do without one.
-    const split = o.benchmarkId !== null && settings.splitEnvironment.size ? `\u0003${canonical(pick(o.dimensions, settings.splitEnvironment))}` : "";
+    const split = o.benchmarkId !== null && metric.split.size ? `\u0003${canonical(pick(o.dimensions, metric.split))}` : "";
     const benchmark = o.benchmarkId !== null ? `id:${o.benchmarkId}${split}` : `dims:${canonical(o.dimensions)}`;
     const key = `${metric.key}\u0001${benchmark}`;
     let history = histories.get(key);
@@ -433,11 +443,12 @@ export function buildSuite(name, rawRuns, settings, threshold) {
 // An entry recorded without the name gets no value for it, which the page shows as unknown.
 // A dimension of the same name keeps its value, since the entry's identity is its dimensions.
 /**
- * @param {Reading} reading
+ * @template {Reading} R
+ * @param {R} reading
  * @param {Set<string>} keys
  * @param {string} name
  * @param {Note} note
- * @returns {Reading}
+ * @returns {R}
  */
 function splitEnvironment(reading, keys, name, note) {
   if (!keys.size) return reading;
@@ -496,7 +507,21 @@ function metricFor(metrics, id, unit, settings) {
     const preferred = settings.metrics.get(id)?.unit ?? unit;
     const target = parseUnit(preferred);
     const canonicalUnit = target && parsed && target.family === parsed.family && target.tail === parsed.tail ? preferred : unit;
-    metric = { key, id, unit: canonicalUnit, rowLabel: null, explicit: new Set(), implied: new Set(), direction: "lower", label: "", slug: "" };
+    const own = settings.metrics.get(id);
+    metric = {
+      key,
+      id,
+      unit: canonicalUnit,
+      rowLabel: null,
+      explicit: new Set(),
+      implied: new Set(),
+      direction: "lower",
+      label: "",
+      slug: "",
+      order: own?.order ?? Infinity,
+      split: own?.splitEnvironment ? new Set(own.splitEnvironment) : settings.splitEnvironment,
+      ignore: own?.ignoreEnvironment ? new Set(own.ignoreEnvironment) : settings.ignoreEnvironment,
+    };
     metrics.set(key, metric);
   }
   return metric;
@@ -565,14 +590,14 @@ function trace(history, settings) {
   let previousValue = null;
   for (let i = 0; i < history.observed.length; i += 1) {
     if (!history.observed[i]) continue;
-    const env = omit(history.envAt[i], settings.ignoreEnvironment);
+    const env = omit(history.envAt[i], history.metric.ignore);
     const print = `${canonical(history.dimsAt[i])}\u0000${canonical(env)}`;
     if (previousPrint !== null && print !== previousPrint) {
       segment += 1;
       previousValue = null;
       history.boundary[i] = [
         ...describeChanges(history.dimsAt[previousIndex], history.dimsAt[i]),
-        ...describeChanges(omit(history.envAt[previousIndex], settings.ignoreEnvironment), env),
+        ...describeChanges(omit(history.envAt[previousIndex], history.metric.ignore), env),
       ];
     }
     history.segment[i] = segment;
@@ -680,7 +705,7 @@ function buildSection(histories, settings) {
       // whose dimensions change on every run stays linear in memory.
       let trace = bySignature.get(signature);
       if (!trace) {
-        trace = { history, dims, own: new Set(), key: `${history.key}\u0002${signature}`, label: "", slug: "" };
+        trace = { history, dims, own: new Set(), inapplicable: new Set(), key: `${history.key}\u0002${signature}`, label: "", slug: "" };
         bySignature.set(signature, trace);
       }
       trace.own.add(i);
@@ -694,19 +719,23 @@ function buildSection(histories, settings) {
   keys.sort((a, b) => order(a) - order(b));
 
   const dims = keys.map((key) => {
+    // An environment name some metric splits by: a trace of that metric without it was recorded
+    // before the name was, and to a trace of a metric that does not split by it, it does not apply.
+    const environment = histories.some((history) => history.metric.split.has(key));
     /** @type {Map<string, Scalar>} */
     const values = new Map();
     let missing = false;
     for (const trace of traces) {
-      if (!Object.hasOwn(trace.dims, key)) missing = true;
-      else if (!values.has(token(trace.dims[key]))) values.set(token(trace.dims[key]), trace.dims[key]);
+      if (Object.hasOwn(trace.dims, key)) {
+        if (!values.has(token(trace.dims[key]))) values.set(token(trace.dims[key]), trace.dims[key]);
+      } else if (environment && !trace.history.metric.split.has(key)) trace.inapplicable.add(key);
+      else missing = true;
     }
     /** @type {DimensionValue[]} */
     const list = [...values.entries()].map(([tok, value]) => ({ token: tok, value, index: 0, text: "", param: "" }));
     // Numbers sort by size; strings and booleans keep their order of appearance.
     if (list.every(({ value }) => typeof value === "number")) list.sort((a, b) => Number(a.value) - Number(b.value));
     if (missing) list.push({ token: MISSING, value: undefined, index: 0, text: "", param: "" });
-    const environment = settings.splitEnvironment.has(key);
     const texts = shortTexts(list.map(({ value }) => value));
     for (const [i, entry] of list.entries()) {
       entry.index = i;
@@ -739,7 +768,8 @@ function buildSection(histories, settings) {
     histories,
     traces,
     dims,
-    metrics: unique(histories.map((history) => history.metric)),
+    // Metrics in config order, then in order of first appearance.
+    metrics: unique(histories.map((history) => history.metric)).sort((a, b) => a.order - b.order),
     settings,
   };
   for (const trace of traces) trace.label = traceLabel(trace, section);
@@ -776,14 +806,15 @@ function traceIdentity(trace) {
  * @param {Section} section
  */
 function traceLabel(trace, section) {
-  const { label: template, splitEnvironment } = section.settings;
+  const template = section.settings.label;
+  const split = trace.history.metric.split;
   if (template) {
     const names = [...template.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
-    if (names.length && names.every((name) => Object.hasOwn(trace.dims, name) || splitEnvironment.has(name))) {
+    if (names.length && names.every((name) => Object.hasOwn(trace.dims, name) || split.has(name))) {
       return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, name) => (Object.hasOwn(trace.dims, name) ? String(trace.dims[name]) : "unknown"));
     }
   }
-  const parts = section.dims.filter((d) => d.varying).map((d) => valueText(d, trace.dims[d.key]));
+  const parts = section.dims.filter((d) => d.varying && !trace.inapplicable.has(d.key)).map((d) => valueText(d, trace.dims[d.key]));
   return parts.join(" / ") || trace.history.name;
 }
 

@@ -164,6 +164,33 @@ test("lines from before an environment name the settings split by was recorded r
   assert.deepEqual(chart.chart?.dims, [{ key: "cpu", label: "CPU", text: "unknown" }]);
 });
 
+test("a dimension that does not apply to a line neither filters it nor colors it like a value", () => {
+  const run = (/** @type {string} */ cpu) => [
+    entry("run", 1, { dimensions: { doc: "a" }, environment: { cpu } }),
+    {
+      ...entry("run", 9, { dimensions: { doc: "a" }, environment: { cpu } }),
+      extra: JSON.stringify({ benchtrail: { version: 1, dimensions: { doc: "a" }, metric: { id: "count" }, environment: { cpu } } }),
+    },
+  ];
+  const s = suites(
+    { main: [run("x86"), run("arm")] },
+    { splitEnvironment: ["cpu"], metrics: { count: { splitEnvironment: [], ignoreEnvironment: ["cpu"], order: 0 } } },
+  );
+  const view = buildView(s, parseLink("?color=cpu&cpu=x86"));
+  assert.deepEqual(
+    view.metrics.map((m) => m.id),
+    ["count", "time"],
+  );
+  // Filtered to one CPU, the count stays, in the color after every CPU's, labelled without a CPU.
+  assert.deepEqual(
+    view.lines.map((line) => [line.metric.id, line.style.colorIndex, line.style.label]),
+    [
+      ["time", 0, "x86"],
+      ["count", 2, "run"],
+    ],
+  );
+});
+
 test("a chart page names its suite and section, since its chart belongs to them", () => {
   assert.equal(formatLink(settle(SPLIT, parseLink("?chart=time"))), "chart=time&suite=main&section=doc,threads");
   assert.equal(formatLink(settle(SPLIT, parseLink("?page=runs&suite=main"))), "page=runs");

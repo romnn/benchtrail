@@ -70,7 +70,12 @@ export function chartsRegion(page) {
       for (const line of page.view.lines) {
         if (line.metric.key !== metric.key) continue;
         if (!cells.has(line.facet.token)) {
-          cells.set(line.facet.token, { key: `${metric.key}\u0002${line.facet.token}`, metric, title: faceted ? line.facet.label : metric.label, benches: [] });
+          cells.set(line.facet.token, {
+            key: `${metric.key}\u0002${line.facet.token}`,
+            metric,
+            title: (faceted && line.facet.label) || metric.label,
+            benches: [],
+          });
         }
         cells.get(line.facet.token).benches.push(line);
       }

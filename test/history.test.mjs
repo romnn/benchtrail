@@ -184,3 +184,37 @@ test("an environment name the settings split by splits a benchmark id too", () =
   assert.equal(traces(clash)[0].dims.cpu, "arm");
   assert.deepEqual([...clash.problems.keys()], ["run records cpu both as a dimension and in its environment; the dimension is kept."]);
 });
+
+test("a metric's own environment lists replace the suite's, and its order places it", () => {
+  // Each run records a time that depends on the CPU and a count that does not, from the pool above.
+  const runs = pool().map(([time], i) => {
+    const { environment } = JSON.parse(time.extra).benchtrail;
+    return [time, entry("run", 1000 + (i % 2), { dimensions: { chart: "a" }, metric: { id: "instructions" }, environment }, "count")];
+  });
+  const s = suite(runs, {
+    splitEnvironment: ["cpu"],
+    label: "{{chart}} / {{cpu}}",
+    metrics: { instructions: { order: 0, splitEnvironment: [], ignoreEnvironment: ["cpu"] } },
+  });
+  const [section] = s.sections;
+  // The count comes first, and is one history across every CPU, judged without a segment break.
+  assert.deepEqual(
+    section.metrics.map((m) => m.id),
+    ["instructions", "cpu"],
+  );
+  const counts = section.traces.filter((t) => t.history.metric.id === "instructions");
+  assert.equal(counts.length, 1);
+  assert.equal(counts[0].own.size, 26);
+  assert.ok(counts[0].history.segment.every((segment) => segment === 0));
+  // The CPU does not apply to it: it is neither unknown nor a value, and its label leaves it out,
+  // which leaves no varying dimension, so the label is the benchmark's name.
+  assert.deepEqual([...counts[0].inapplicable], ["cpu"]);
+  assert.equal(counts[0].label, "run");
+  const cpu = section.dims.find((d) => d.key === "cpu");
+  assert.deepEqual(
+    cpu.values.map((v) => v.text),
+    ["7763 64", "9V74 80", "unknown"],
+  );
+  // The times still split by CPU, with the runs from before it was recorded as unknown.
+  assert.equal(section.traces.filter((t) => t.history.metric.id === "cpu").length, 3);
+});

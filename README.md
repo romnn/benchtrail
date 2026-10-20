@@ -203,7 +203,14 @@ The remaining keys apply to every suite at the top level, or to one suite under 
 - `names` is a regular expression whose named groups read dimensions out of an untyped benchmark
   name; a group called `metric` names the metric.
 - `label` is a template for a benchmark's label.
-- `metrics` maps a metric id to `{ "label", "direction": "lower" | "higher", "unit" }`.
+- `metrics` maps a metric id to `{ "label", "direction": "lower" | "higher", "unit", "order",
+  "splitEnvironment", "ignoreEnvironment" }`.
+  Charts follow `order`, lower first, then the order the metrics first appear in.
+  A metric's own `splitEnvironment` or `ignoreEnvironment` list replaces the suite's for that
+  metric alone, such as an instruction count that does not depend on the CPU the times split by:
+  `{ "instructions": { "order": 0, "splitEnvironment": [], "ignoreEnvironment": ["cpu"] } }`.
+  An environment name the suite splits by does not apply to such a metric's lines: they are
+  neither filtered nor colored by it, and their labels leave it out.
 - `dimensions` maps a dimension name to `{ "label", "order" }`; dimensions with a lower `order`
   come first.
 - `colorBy` and `dashBy` name the dimension that colors or dashes the lines by default.
