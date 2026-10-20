@@ -245,6 +245,28 @@ A chart's title opens that chart on a page of its own, as `?chart=<metric>:<dime
 Both open in place: Back returns to the earlier view, and the Overview link keeps the filters,
 window, and run chosen on the page.
 
+### Keeping the history small
+
+github-action-benchmark keeps every run unless its `max-items-in-chart` input caps the runs of a
+suite: with `max-items-in-chart: 500`, each run it records drops the oldest runs of that suite
+from `data.js` beyond the newest 500.
+benchtrail only reads the history, so the cap is set where the history is recorded.
+
+A suite the benchmarks no longer record stays in the history, and on the page, until it is
+removed.
+`scripts/suites.mjs` folds it into another suite or drops it, on a checkout of the storage branch:
+
+```sh
+git switch gh-pages
+node /path/to/benchtrail/scripts/suites.mjs dev/bench/data.js --merge "old suite=new suite"
+node /path/to/benchtrail/scripts/suites.mjs dev/bench/data.js --drop "abandoned suite"
+git commit -am "Fold the old suite into the new one" && git push
+```
+
+A merge appends each run's entries of the first suite to the run of the second that recorded the
+same commit, adds the runs of other commits in date order, and removes the first suite.
+Run it while no benchmark is recording, since each recording rewrites the file.
+
 ## Typed benchmarks
 
 Without configuration, a benchmark's name is its only dimension.
