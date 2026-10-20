@@ -56,7 +56,7 @@ jobs:
     steps:
       # A called workflow cannot name the release it was called at, so it pins its own release, which
       # the release bump keeps in step.
-      - uses: romnn/benchtrail@v0.3.0
+      - uses: romnn/benchtrail@v0.4.0
         with:
           path: _site/${{ inputs.path || inputs.benchmark-data-dir-path }}
           gh-pages-branch: ${{ inputs.gh-pages-branch }}

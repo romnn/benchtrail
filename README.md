@@ -34,7 +34,7 @@ deploy:
     contents: read
     pages: write
     id-token: write
-  uses: romnn/benchtrail/.github/workflows/pages.yaml@v0.3.0
+  uses: romnn/benchtrail/.github/workflows/pages.yaml@v0.4.0
   with:
     benchmark-data-dir-path: dev/bench
     settings: |
@@ -94,7 +94,7 @@ jobs:
         uses: actions/configure-pages@v6
       - name: Build the documentation
         run: hugo --minify --source docs --baseURL "${{ steps.pages.outputs.base_url }}/"
-      - uses: romnn/benchtrail@v0.3.0
+      - uses: romnn/benchtrail@v0.4.0
         with:
           path: docs/public/bench
           benchmark-data-dir-path: dev/bench
