@@ -21,9 +21,10 @@ function entry(name, value, payload) {
 /**
  * Suites from one list of runs per suite, each run a list of entries.
  * @param {Record<string, unknown[][]>} bySuite
+ * @param {Record<string, unknown>} [config] the settings, as `benchtrail.json` holds them
  */
-function suites(bySuite) {
-  const settings = readConfig({});
+function suites(bySuite, config = {}) {
+  const settings = readConfig(config);
   return Object.entries(bySuite).map(([name, runs]) =>
     buildSuite(
       name,
@@ -145,6 +146,22 @@ test("a chart page shows the lines of its chart alone, which no longer split by 
   assert.equal(new Set(buildView(SPLIT, parseLink(`?chart=time&${COLORED}`)).lines.map((line) => line.facet.token)).size, 2);
   // A chart that names a dimension the section lacks matches nothing.
   assert.equal(buildView(SPLIT, parseLink(`?chart=time:os=linux&${COLORED}`)).lines.length, 0);
+});
+
+test("lines from before an environment name the settings split by was recorded read as unknown", () => {
+  const cpu = (/** @type {string | undefined} */ value) => (value === undefined ? {} : { environment: { cpu: value } });
+  const s = suites(
+    { main: [undefined, "x86", "arm"].map((value) => [entry("run", 1, { dimensions: { doc: "a" }, ...cpu(value) })]) },
+    { splitEnvironment: ["cpu"] },
+  );
+  assert.deepEqual(
+    buildView(s, parseLink("?color=cpu")).lines.map((line) => line.style.label),
+    ["x86", "arm", "unknown cpu"],
+  );
+  // A chart of the runs without the name heads it as unknown, and its link spells no value as `-`.
+  const chart = buildView(s, parseLink("?chart=time:cpu=-&color=~&dash=~"));
+  assert.equal(chart.lines.length, 1);
+  assert.deepEqual(chart.chart?.dims, [{ key: "cpu", label: "CPU", text: "unknown" }]);
 });
 
 test("a chart page names its suite and section, since its chart belongs to them", () => {

@@ -3,7 +3,6 @@
 
 import { formatDate } from "../core/format.js";
 import { safeUrl } from "../core/history.js";
-import { MISSING } from "../core/identity.js";
 import { AXES, admits, RANGES, SCALES, SMOOTHING } from "../core/link.js";
 import { only } from "../core/selection.js";
 import { colorable, DASHES, dashable, SLOTS, sectionRef } from "../core/view.js";
@@ -163,7 +162,7 @@ export function headerRegion(page) {
         key: d.key,
         label: d.label,
         inline: legend,
-        items: d.values.map((value) => ({ id: value.param, text: value.token === MISSING ? "none" : value.text, style: style(value) })),
+        items: d.values.map((value) => ({ id: value.param, text: value.text, style: style(value) })),
         filtered: page.link.dimensions.has(d.key),
         shown: (id) => admits(page.link.dimensions.get(d.key), id),
         show: (selected) => page.dispatch({ type: "dimension", key: d.key, filter: selected === "all" ? { kind: "all" } : only(selected) }),

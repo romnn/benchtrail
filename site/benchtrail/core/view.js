@@ -5,7 +5,7 @@
 
 import { median, relative } from "./detect.js";
 import { valueText } from "./history.js";
-import { linkPart, MISSING, token, unlinkPart, urlText } from "./identity.js";
+import { linkPart, token, unlinkPart, urlText } from "./identity.js";
 import { admits, RANGES } from "./link.js";
 import { compareOrder, unique } from "./list.js";
 
@@ -519,7 +519,7 @@ function chartHeading(section, scope) {
   const dims = [...scope.dims].map(([key, text]) => {
     const d = section?.dims.find((candidate) => candidate.key === key);
     const value = d?.values.find((candidate) => candidate.param === text);
-    return { key, label: d?.label ?? key, text: value ? (value.token === MISSING ? "none" : value.text) : text };
+    return { key, label: d?.label ?? key, text: value ? value.text : text };
   });
   return { metric: section?.metrics.find((m) => m.slug === scope.metric) ?? null, dims };
 }

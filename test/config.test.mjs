@@ -16,6 +16,7 @@ test("settings that hold are kept as given", () => {
     dimensions: { document: { label: "Document", order: 1 } },
     colorBy: "document",
     ignoreEnvironment: ["rustc"],
+    splitEnvironment: ["cpu"],
     smoothing: 5,
   });
   assert.deepEqual(config.problems, []);
@@ -27,6 +28,7 @@ test("settings that hold are kept as given", () => {
   assert.deepEqual(settings.metrics.get("peak rss"), { label: "Peak RSS", direction: "lower", unit: "MiB" });
   assert.equal(settings.dimensions.get("document").order, 1);
   assert.deepEqual([...settings.ignoreEnvironment], ["rustc"]);
+  assert.deepEqual([...settings.splitEnvironment], ["cpu"]);
   assert.equal(settings.smoothing, 5);
 });
 
@@ -44,6 +46,7 @@ test("a value that breaks a rule is left out and reported by its path", () => {
     names: "(?<broken",
     metrics: { "peak rss": { direction: "down", color: "red" }, cpu: "fast" },
     dimensions: { document: { order: "first" } },
+    splitEnvironment: "cpu",
     smoothing: 7,
     colour: "document",
   });
@@ -54,6 +57,7 @@ test("a value that breaks a rule is left out and reported by its path", () => {
     'The setting `metrics["peak rss"].color` is not a metric setting.',
     "The setting `metrics.cpu` must be an object.",
     "The setting `dimensions.document.order` must be a number.",
+    "The setting `splitEnvironment` must be a list of environment names.",
     "The setting `smoothing` must be one of 0, 5, 11, 21.",
     "The setting `colour` is not a setting.",
   ]);

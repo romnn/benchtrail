@@ -24,6 +24,7 @@ import { SMOOTHING } from "./link.js";
  * @property {string} [colorBy]
  * @property {string} [dashBy]
  * @property {string[]} [ignoreEnvironment]
+ * @property {string[]} [splitEnvironment]
  * @property {number} [smoothing]
  */
 
@@ -59,6 +60,7 @@ import { SMOOTHING } from "./link.js";
  * @property {string | null} colorBy
  * @property {string | null} dashBy
  * @property {Set<string>} ignoreEnvironment
+ * @property {Set<string>} splitEnvironment
  * @property {number} smoothing
  * @property {string[]} problems the problems in the settings this suite reads
  */
@@ -209,7 +211,8 @@ function readSettings(raw, at, report) {
         });
         break;
       case "ignoreEnvironment":
-        if (Array.isArray(value) && value.every((name) => typeof name === "string")) settings.ignoreEnvironment = value;
+      case "splitEnvironment":
+        if (Array.isArray(value) && value.every((name) => typeof name === "string")) settings[key] = value;
         else report(path, "must be a list of environment names");
         break;
       case "smoothing":
@@ -242,6 +245,7 @@ export function suiteSettings(config, name) {
     colorBy: merged.colorBy ?? null,
     dashBy: merged.dashBy ?? null,
     ignoreEnvironment: new Set(merged.ignoreEnvironment ?? []),
+    splitEnvironment: new Set(merged.splitEnvironment ?? []),
     smoothing: merged.smoothing ?? 0,
     problems: config.problems.filter((problem) => problem.suite === null || problem.suite === name).map((problem) => problem.message),
   };

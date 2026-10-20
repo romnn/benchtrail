@@ -1,10 +1,10 @@
 // Checks how recorded runs become suites: identity of benchmarks and their values, link ids,
-// sections, and the problems reported for invalid entries.
+// sections, environment names that split benchmarks, and the problems reported for invalid entries.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readConfig, suiteSettings } from "../site/benchtrail/core/config.js";
-import { buildSuite } from "../site/benchtrail/core/history.js";
+import { buildSuite, valueText } from "../site/benchtrail/core/history.js";
 import { urlText } from "../site/benchtrail/core/identity.js";
 
 // A typed entry as a custom github-action-benchmark tool records it.
@@ -124,4 +124,63 @@ test("an invalid name pattern is reported, and names are read as they are", () =
   const s = suite([[{ name: "parse small", value: 1, unit: "s" }]], { names: "(?<broken" });
   assert.ok([...s.problems.keys()].some((p) => /The setting `names` is not a valid regular expression/.test(p)));
   assert.equal(traces(s)[0].dims.benchmark, "parse small");
+});
+
+// A runner pool of mixed hardware: four runs from before the CPU was recorded, then two CPU models
+// in turn, where the first regresses by 30% over its last three runs.
+const CPUS = ["AMD EPYC 7763 64-Core Processor", "AMD EPYC 9V74 80-Core Processor"];
+function pool(payload = {}) {
+  const runs = [];
+  for (let i = 0; i < 4; i += 1)
+    runs.push([entry("run", 40, { dimensions: { chart: "a" }, metric: { id: "cpu" }, environment: { rustc: "1.99.0" }, ...payload })]);
+  for (let i = 0; i < 22; i += 1) {
+    const cpu = CPUS[i % 2];
+    const value = cpu === CPUS[0] ? (i >= 16 ? 56 : 42 + (i % 4) * 0.1) : 22 + (i % 3) * 0.1;
+    runs.push([entry("run", value, { dimensions: { chart: "a" }, metric: { id: "cpu" }, environment: { rustc: "1.99.0", cpu }, ...payload })]);
+  }
+  return runs;
+}
+const shiftsOf = (history) => history.shifts.flatMap((shift, i) => (shift ? [[i, shift.kind]] : []));
+
+test("an environment name the settings split by makes one benchmark per value, unknown where unrecorded", () => {
+  const s = suite(pool(), { splitEnvironment: ["cpu"], label: "{{chart}} / {{cpu}}" });
+  const all = traces(s);
+
+  // The runs from before the CPU was recorded and each CPU model are separate histories.
+  assert.equal(all.length, 3);
+  assert.equal(new Set(all.map((t) => t.history)).size, 3);
+  const byCpu = new Map(all.map((t) => [t.dims.cpu, t]));
+  assert.deepEqual([...byCpu.keys()], [undefined, ...CPUS]);
+
+  // The CPU is a dimension now, which leaves the environment, and no value of it reads as unknown.
+  const [section] = s.sections;
+  const cpu = section.dims.find((d) => d.key === "cpu");
+  assert.equal(cpu.environment, true);
+  assert.deepEqual(
+    cpu.values.map((v) => v.text),
+    ["7763 64", "9V74 80", "unknown"],
+  );
+  assert.equal(valueText(cpu, undefined), "unknown cpu");
+  assert.equal(byCpu.get(undefined).label, "a / unknown");
+  assert.equal(byCpu.get(CPUS[0]).label, `a / ${CPUS[0]}`);
+  assert.deepEqual({ ...byCpu.get(CPUS[0]).history.envAt[4] }, { rustc: "1.99.0" });
+
+  // Each CPU's history is judged on its own, so the regression is found within its series.
+  assert.deepEqual(shiftsOf(byCpu.get(CPUS[0]).history), [[20, "worse"]]);
+  assert.deepEqual(shiftsOf(byCpu.get(CPUS[1]).history), []);
+  assert.deepEqual(shiftsOf(byCpu.get(undefined).history), []);
+
+  // In the environment, the alternating CPU would cut one history into segments too short to judge.
+  const unsplit = traces(suite(pool()));
+  assert.equal(unsplit.length, 1);
+  assert.deepEqual(shiftsOf(unsplit[0].history), []);
+});
+
+test("an environment name the settings split by splits a benchmark id too", () => {
+  const s = suite(pool({ benchmarkId: "run" }), { splitEnvironment: ["cpu"] });
+  assert.equal(new Set(traces(s).map((t) => t.history)).size, 3);
+  // A dimension keeps a value the environment also records under its name, and the clash is reported.
+  const clash = suite([[entry("run", 1, { dimensions: { cpu: "arm" }, metric: { id: "cpu" }, environment: { cpu: "x86" } })]], { splitEnvironment: ["cpu"] });
+  assert.equal(traces(clash)[0].dims.cpu, "arm");
+  assert.deepEqual([...clash.problems.keys()], ["run records cpu both as a dimension and in its environment; the dimension is kept."]);
 });

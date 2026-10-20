@@ -91,12 +91,16 @@ import { FAMILY_LABELS, parseUnit, unitFactor } from "./units.js";
  */
 
 /**
+ * A dimension of a section.
+ * `environment` marks an environment name the settings split benchmarks by: a trace without it was
+ * recorded before the name was, so its value is unknown rather than absent.
  * @typedef {object} Dimension
  * @property {string} key
  * @property {string} label
  * @property {DimensionValue[]} values
  * @property {Map<string, DimensionValue>} byToken
  * @property {boolean} varying
+ * @property {boolean} environment
  */
 
 /**
@@ -331,7 +335,7 @@ export function buildSuite(name, rawRuns, settings, threshold) {
         note(`run ${runs[index].short} has an entry that is not an object; it is skipped.`);
         continue;
       }
-      const observation = readEntry(entry, settings, note);
+      const observation = splitEnvironment(readEntry(entry, settings, note), settings.splitEnvironment, String(entry.name ?? ""), note);
       observations.push({ index, entry, tool: raw.tool, unit: String(entry.unit ?? ""), ...observation });
     }
   }
@@ -350,8 +354,11 @@ export function buildSuite(name, rawRuns, settings, threshold) {
     // A history is one benchmark measured in one metric.
     // An explicit id keeps a benchmark's history together while its dimensions change; without
     // one, the dimensions themselves are its identity.
-    // The environment never takes part, so a history keeps its identity across a toolchain change.
-    const benchmark = o.benchmarkId !== null ? `id:${o.benchmarkId}` : `dims:${canonical(o.dimensions)}`;
+    // The environment never takes part, so a history keeps its identity across a toolchain change,
+    // apart from the names the settings split by, which are dimensions by now; under an explicit id
+    // their values still split the history, as they do without one.
+    const split = o.benchmarkId !== null && settings.splitEnvironment.size ? `\u0003${canonical(pick(o.dimensions, settings.splitEnvironment))}` : "";
+    const benchmark = o.benchmarkId !== null ? `id:${o.benchmarkId}${split}` : `dims:${canonical(o.dimensions)}`;
     const key = `${metric.key}\u0001${benchmark}`;
     let history = histories.get(key);
     if (!history) {
@@ -417,6 +424,42 @@ export function buildSuite(name, rawRuns, settings, threshold) {
 
   const sections = buildSections([...histories.values()], settings);
   return { name, runs, metrics, sections, settings, problems };
+}
+
+// Moves the environment names the settings split by into the dimensions, so each of their values
+// is a benchmark of its own, with its own history and change detection, rather than a new segment
+// of one history: a value that alternates between runs, such as the CPU of a pool of hosted
+// runners, would otherwise leave no segment long enough to judge.
+// An entry recorded without the name gets no value for it, which the page shows as unknown.
+// A dimension of the same name keeps its value, since the entry's identity is its dimensions.
+/**
+ * @param {Reading} reading
+ * @param {Set<string>} keys
+ * @param {string} name
+ * @param {Note} note
+ * @returns {Reading}
+ */
+function splitEnvironment(reading, keys, name, note) {
+  if (!keys.size) return reading;
+  const dimensions = tags(reading.dimensions);
+  const environment = tags({});
+  for (const [key, value] of Object.entries(reading.environment)) {
+    if (!keys.has(key)) environment[key] = value;
+    else if (Object.hasOwn(dimensions, key)) note(`${name} records ${key} both as a dimension and in its environment; the dimension is kept.`);
+    else dimensions[key] = value;
+  }
+  return { ...reading, dimensions, environment };
+}
+
+/**
+ * @param {Tags} source
+ * @param {Set<string>} keys
+ * @returns {Tags}
+ */
+function pick(source, keys) {
+  const out = tags({});
+  for (const [key, value] of Object.entries(source)) if (keys.has(key)) out[key] = value;
+  return out;
 }
 
 // A recorded spread, with the recorded unit added when the spread is a bare number, since values
@@ -663,10 +706,11 @@ function buildSection(histories, settings) {
     // Numbers sort by size; strings and booleans keep their order of appearance.
     if (list.every(({ value }) => typeof value === "number")) list.sort((a, b) => Number(a.value) - Number(b.value));
     if (missing) list.push({ token: MISSING, value: undefined, index: 0, text: "", param: "" });
+    const environment = settings.splitEnvironment.has(key);
     const texts = shortTexts(list.map(({ value }) => value));
     for (const [i, entry] of list.entries()) {
       entry.index = i;
-      entry.text = texts[i];
+      entry.text = entry.value === undefined && environment ? "unknown" : texts[i];
     }
     // On screen, a string that reads like another value of the dimension is shown quoted.
     const plain = countBy(list, (v) => String(v.value));
@@ -674,7 +718,14 @@ function buildSection(histories, settings) {
       entry.param = urlText(entry.value);
       if ((plain.get(String(entry.value)) ?? 0) > 1 && typeof entry.value === "string") entry.text = `"${entry.value}"`;
     }
-    return { key, label: dimensionLabel(key, settings), values: list, byToken: new Map(list.map((v) => [v.token, v])), varying: list.length > 1 };
+    return {
+      key,
+      label: dimensionLabel(key, settings),
+      values: list,
+      byToken: new Map(list.map((v) => [v.token, v])),
+      varying: list.length > 1,
+      environment,
+    };
   });
 
   // A section with dimensions is linked by their keys; one without is a single benchmark, linked
@@ -717,17 +768,19 @@ function traceIdentity(trace) {
 }
 
 // A trace's label is the config template when every name it uses is one of the trace's
-// dimensions, otherwise the values of the dimensions that vary in its section.
+// dimensions, or an environment name the settings split by, which reads as unknown in a trace
+// recorded without it; otherwise the label is the values of the dimensions that vary in its
+// section.
 /**
  * @param {Trace} trace
  * @param {Section} section
  */
 function traceLabel(trace, section) {
-  const template = section.settings.label;
+  const { label: template, splitEnvironment } = section.settings;
   if (template) {
     const names = [...template.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
-    if (names.length && names.every((name) => Object.hasOwn(trace.dims, name))) {
-      return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, name) => String(trace.dims[name]));
+    if (names.length && names.every((name) => Object.hasOwn(trace.dims, name) || splitEnvironment.has(name))) {
+      return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, name) => (Object.hasOwn(trace.dims, name) ? String(trace.dims[name]) : "unknown"));
     }
   }
   const parts = section.dims.filter((d) => d.varying).map((d) => valueText(d, trace.dims[d.key]));
@@ -790,13 +843,14 @@ function humanize(id) {
 
 // How a dimension value reads inside a label: strings as themselves, numbers and booleans with
 // their dimension's name, since a bare `8` says nothing.
+// No value reads as absent, or as unknown for an environment name the settings split by.
 /**
  * @param {Dimension} dim
  * @param {Scalar | undefined} value
  * @returns {string}
  */
 export function valueText(dim, value) {
-  if (value === undefined) return `no ${dim.label.toLowerCase()}`;
+  if (value === undefined) return `${dim.environment ? "unknown" : "no"} ${dim.label.toLowerCase()}`;
   if (typeof value === "number") return `${dim.label.toLowerCase()} ${value}`;
   if (typeof value === "boolean") return value ? dim.label.toLowerCase() : `no ${dim.label.toLowerCase()}`;
   return dim.byToken.get(token(value))?.text ?? value;
