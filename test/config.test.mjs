@@ -19,6 +19,7 @@ test("settings that hold are kept as given", () => {
     dimensions: { document: { label: "Document", order: 1 } },
     colorBy: "document",
     lineLabel: "{{document}}",
+    range: 100,
     ignoreEnvironment: ["rustc"],
     splitEnvironment: ["cpu"],
     smoothing: 5,
@@ -34,6 +35,8 @@ test("settings that hold are kept as given", () => {
   assert.equal(settings.dimensions.get("document").order, 1);
   assert.deepEqual([...settings.ignoreEnvironment], ["rustc"]);
   assert.equal(settings.lineLabel, "{{document}}");
+  assert.equal(settings.range, "100");
+  assert.equal(suiteSettings(readConfig({ range: "all" }), "main").range, "all");
   assert.deepEqual([...settings.splitEnvironment], ["cpu"]);
   assert.equal(settings.smoothing, 5);
 });
@@ -43,6 +46,7 @@ test("no settings read as the defaults", () => {
   assert.equal(readConfig({}).threshold, 0.05);
   assert.equal(settings.names, null);
   assert.equal(settings.smoothing, 0);
+  assert.equal(settings.range, "50");
   assert.deepEqual(settings.problems, []);
 });
 
@@ -54,6 +58,7 @@ test("a value that breaks a rule is left out and reported by its path", () => {
     dimensions: { document: { order: "first" } },
     splitEnvironment: "cpu",
     smoothing: 7,
+    range: 40,
     colour: "document",
   });
   assert.deepEqual(messages(config), [
@@ -67,6 +72,7 @@ test("a value that breaks a rule is left out and reported by its path", () => {
     "The setting `dimensions.document.order` must be a number.",
     "The setting `splitEnvironment` must be a list of environment names.",
     "The setting `smoothing` must be one of 0, 5, 11, 21.",
+    'The setting `range` must be one of 30, 50, 100, "all".',
     "The setting `colour` is not a setting.",
   ]);
 

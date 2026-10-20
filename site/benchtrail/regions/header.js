@@ -108,7 +108,7 @@ export function headerRegion(page) {
   }
 
   function renderFilters() {
-    segmented("range", RANGES, page.link.range, (key) => page.dispatch({ type: "range", range: key }));
+    segmented("range", RANGES, page.link.range ?? page.view.suite.settings.range, (key) => page.dispatch({ type: "range", range: key }));
     segmented("scale", SCALES, page.link.scale, (key) => page.dispatch({ type: "set", changes: { scale: key } }));
     // The window names runs, so a change of axis keeps the same runs in view.
     segmented("axis", AXES, page.link.axis, (key) => page.dispatch({ type: "set", changes: { axis: key } }));

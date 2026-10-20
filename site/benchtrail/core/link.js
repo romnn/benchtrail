@@ -60,7 +60,7 @@
  * @typedef {{ kind: "overview" } | { kind: "runs", list: RunList } | { kind: "chart", chart: string }} Route
  */
 
-/** @typedef {"30" | "100" | "all"} RangeKey */
+/** @typedef {"30" | "50" | "100" | "all"} RangeKey */
 /** @typedef {"absolute" | "change"} ScaleKey */
 /** @typedef {"run" | "date"} AxisKey */
 /** @typedef {"auto" | "charts" | "movers"} LayoutKey */
@@ -73,7 +73,7 @@
  * @property {string | null} data the history script the page loads, when the link names one
  * @property {string | null} suite null for the first suite
  * @property {SectionRef | null} section null for the suite's first section
- * @property {RangeKey} range
+ * @property {RangeKey | null} range null for the suite's configured range
  * @property {Filter<string>} metrics by metric link id
  * @property {ReadonlyMap<string, Filter<string>>} dimensions by dimension key, values by link text
  * @property {DimensionChoice} color
@@ -92,6 +92,7 @@
 /** The run counts a link can limit the page to, newest runs last. */
 export const RANGES = /** @type {const} */ ([
   { key: "30", label: "Last 30", count: 30 },
+  { key: "50", label: "Last 50", count: 50 },
   { key: "100", label: "Last 100", count: 100 },
   { key: "all", label: "All", count: Infinity },
 ]);
@@ -121,7 +122,7 @@ export function emptyLink() {
     data: null,
     suite: null,
     section: null,
-    range: "all",
+    range: null,
     metrics: { kind: "all" },
     dimensions: new Map(),
     color: { kind: "auto" },
@@ -220,10 +221,11 @@ function decodeQuery(text) {
 
 /**
  * @template {string} K
+ * @template {string | null} F
  * @param {readonly { key: K }[]} options
  * @param {string | undefined} value
- * @param {K} fallback
- * @returns {K}
+ * @param {F} fallback
+ * @returns {K | F}
  */
 function oneOf(options, value, fallback) {
   return options.find((option) => option.key === value)?.key ?? fallback;
@@ -323,9 +325,9 @@ const CODECS = [
   {
     keys: ["runs"],
     read: (q, link) => {
-      link.range = oneOf(RANGES, q.get("runs"), "all");
+      link.range = oneOf(RANGES, q.get("runs"), null);
     },
-    write: (link) => (link.range === "all" ? [] : [["runs", link.range]]),
+    write: (link) => (link.range === null ? [] : [["runs", link.range]]),
   },
   {
     keys: ["metrics"],

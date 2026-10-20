@@ -271,7 +271,8 @@ export function settle(suites, next) {
   if (next.smoothing.kind === "explicit" && next.smoothing.window === suite.settings.smoothing) settled.smoothing = { kind: "configured" };
 
   // Run and window
-  const runs = rangeRuns(suite, next.range);
+  if (next.range === suite.settings.range) settled.range = null;
+  const runs = rangeRuns(suite, next.range ?? suite.settings.range);
   const position = (/** @type {string | null} */ key) => (key === null ? -1 : runs.findIndex((run) => run.key === key));
   if (next.run.kind === "at" && position(next.run.key) < 0) settled.run = { kind: "latest" };
   if (next.window.kind === "between") {
@@ -440,7 +441,7 @@ function makeLine(trace, points, style, facet) {
  */
 export function buildView(suites, link) {
   const { suite, section, found } = resolveTarget(suites, link);
-  const runs = rangeRuns(suite, link.range);
+  const runs = rangeRuns(suite, link.range ?? suite.settings.range);
   const offset = suite.runs.length - runs.length;
   const pivot = choosePivot(section, link);
   const dimsByKey = new Map(section.dims.map((d) => [d.key, d]));

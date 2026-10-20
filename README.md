@@ -224,6 +224,9 @@ The remaining keys apply to every suite at the top level, or to one suite under 
   Each value then has its own history and change detection, and the name works as a dimension in
   filters, `colorBy`, `dashBy`, `label`, and links.
   Runs recorded before the name was show as `unknown`, in a series of their own.
+- `range` is how many of the newest runs the page shows until the reader picks another range:
+  `30`, `50` (the default), `100`, or `"all"`.
+  The range buttons widen it, and a link keeps the reader's choice as `?runs=`.
 - `smoothing` is the default smoothing window in runs: `0` (off, the default), `5`, `11` or `21`.
   Charts then draw the rolling median as a line over the raw values.
 

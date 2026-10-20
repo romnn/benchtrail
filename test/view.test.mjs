@@ -210,6 +210,23 @@ test("a line label template names a line inside its chart, unknown where a split
   );
 });
 
+test("the page shows the configured range of newest runs, the last 50 by default, and a link widens it", () => {
+  const runs = Array.from({ length: 60 }, (_, i) => [entry("a", 100 + i, { dimensions: { doc: "a" } })]);
+  const byDefault = suites({ main: runs });
+  assert.equal(buildView(byDefault, parseLink("")).runs.length, 50);
+  assert.equal(buildView(byDefault, parseLink("")).runs[0].index, 10);
+  assert.equal(buildView(byDefault, parseLink("?runs=all")).runs.length, 60);
+  assert.equal(buildView(byDefault, parseLink("?runs=30")).runs.length, 30);
+  // Picking the configured range reads as no choice, so the link stays short; any other stays.
+  assert.equal(formatLink(settle(byDefault, parseLink("?runs=50"))), "");
+  assert.equal(formatLink(settle(byDefault, parseLink("?runs=all"))), "runs=all");
+
+  const everything = suites({ main: runs }, { range: "all" });
+  assert.equal(buildView(everything, parseLink("")).runs.length, 60);
+  assert.equal(buildView(everything, parseLink("?runs=50")).runs.length, 50);
+  assert.equal(formatLink(settle(everything, parseLink("?runs=50"))), "runs=50");
+});
+
 test("a chart page names its suite and section, since its chart belongs to them", () => {
   assert.equal(formatLink(settle(SPLIT, parseLink("?chart=time"))), "chart=time&suite=main&section=doc,threads");
   assert.equal(formatLink(settle(SPLIT, parseLink("?page=runs&suite=main"))), "page=runs");

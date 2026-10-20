@@ -2,7 +2,7 @@
 // The page and the GitHub Action read them by the same rules: a value that breaks one is left out
 // and reported, so the page draws with the rest while the action fails the deploy.
 
-import { SMOOTHING } from "./link.js";
+import { RANGES, SMOOTHING } from "./link.js";
 
 /**
  * A metric's settings.
@@ -35,7 +35,10 @@ import { SMOOTHING } from "./link.js";
  * @property {string[]} [ignoreEnvironment]
  * @property {string[]} [splitEnvironment]
  * @property {number} [smoothing]
+ * @property {RangeKey} [range]
  */
+
+/** @typedef {import("./link.js").RangeKey} RangeKey */
 
 /**
  * A link the masthead shows, such as one back to the project's documentation.
@@ -72,12 +75,15 @@ import { SMOOTHING } from "./link.js";
  * @property {Set<string>} ignoreEnvironment
  * @property {Set<string>} splitEnvironment
  * @property {number} smoothing
+ * @property {RangeKey} range the runs the page shows until the reader picks a range
  * @property {string[]} problems the problems in the settings this suite reads
  */
 
 /** @typedef {(path: readonly string[], rule: string) => void} Report */
 
 export const DEFAULT_THRESHOLD = 0.05;
+// The newest runs a page shows by default, so the latest changes read without zooming.
+export const DEFAULT_RANGE = "50";
 
 // Keys that apply to the page as a whole, so they are not settings a suite can override.
 const PAGE_KEYS = new Set(["title", "dataUrl", "links", "threshold", "suites"]);
@@ -233,6 +239,13 @@ function readSettings(raw, at, report) {
         if (names) settings[key] = names;
         break;
       }
+      // A count of the newest runs, or "all".
+      case "range": {
+        const range = RANGES.find((option) => option.count === value || (option.key === "all" && value === "all"));
+        if (range) settings.range = range.key;
+        else report(path, `must be one of ${RANGES.map((option) => (option.key === "all" ? '"all"' : option.key)).join(", ")}`);
+        break;
+      }
       case "smoothing":
         if (SMOOTHING.some((option) => option.key === value)) settings.smoothing = /** @type {number} */ (value);
         else report(path, `must be one of ${SMOOTHING.map((option) => option.key).join(", ")}`);
@@ -266,6 +279,7 @@ export function suiteSettings(config, name) {
     ignoreEnvironment: new Set(merged.ignoreEnvironment ?? []),
     splitEnvironment: new Set(merged.splitEnvironment ?? []),
     smoothing: merged.smoothing ?? 0,
+    range: merged.range ?? DEFAULT_RANGE,
     problems: config.problems.filter((problem) => problem.suite === null || problem.suite === name).map((problem) => problem.message),
   };
 }
