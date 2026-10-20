@@ -71,7 +71,7 @@ async function get(source, url, accept, retries, what) {
       if (response.ok) return body;
       if (response.status === 404) throw new MissingHistory(`GitHub has no ${what}, or the token cannot read the repository.`);
       failure = `GitHub answered ${response.status} ${response.statusText}: ${body.slice(0, 200)}`;
-      const limit = rateLimitWait(response, retries);
+      const limit = rateLimitWait(response, body, retries);
       if (limit === null && response.status < 500) throw new Error(`Reading ${what} failed. ${failure}`);
       if (limit !== null) wait = limit;
     } catch (error) {
@@ -85,14 +85,17 @@ async function get(source, url, accept, retries, what) {
 
 /**
  * How long a rate limit asks to wait, in milliseconds, or null when the answer is no rate limit.
- * GitHub answers a rate limit with 429, or with 403 and the limit's headers.
+ * GitHub answers a rate limit with 429, or with 403 and either the limit's headers or, for a
+ * secondary limit, a message that names it.
  * @param {Response} response
+ * @param {string} body
  * @param {Retries} retries
  */
-function rateLimitWait(response, retries) {
+function rateLimitWait(response, body, retries) {
   const after = Number(response.headers.get("retry-after"));
   const exhausted = response.headers.get("x-ratelimit-remaining") === "0";
-  if (response.status !== 429 && !(response.status === 403 && (after > 0 || exhausted))) return null;
+  const limited = after > 0 || exhausted || /secondary rate limit/i.test(body);
+  if (response.status !== 429 && !(response.status === 403 && limited)) return null;
   if (after > 0) return after * 1000;
   // An exhausted limit names when it resets, in seconds since the epoch.
   const reset = Number(response.headers.get("x-ratelimit-reset"));

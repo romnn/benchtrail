@@ -250,4 +250,17 @@ test("a rate limit waits until it resets, and a dropped answer is retried", asyn
   assert.equal((await fetchHistory({ ...source, api: github.api }, { tries: 2, pause: 0, limitPause: 0 })).text, HISTORY);
   // The retry waited for the reset, plus a second's margin.
   assert.ok(Date.now() - started >= 900);
+
+  // A secondary limit names itself only in its message, and is retried too, unlike a refusal.
+  const secondary = await fakeGitHub(t, {
+    "/repos/romnn/progeny/branches/gh-pages": [
+      [403, '{"message":"You have exceeded a secondary rate limit."}'],
+      [200, BRANCH],
+    ],
+    [`/repos/romnn/progeny/contents/bench/data.js?ref=${SHA}`]: [[200, HISTORY]],
+  });
+  assert.equal((await fetchHistory({ ...source, api: secondary.api }, { tries: 2, pause: 0, limitPause: 0 })).text, HISTORY);
+  const forbidden = await fakeGitHub(t, { "/repos/romnn/progeny/branches/gh-pages": [[403, '{"message":"Resource not accessible by integration"}']] });
+  await assert.rejects(fetchHistory({ ...source, api: forbidden.api }, { tries: 2, pause: 0, limitPause: 0 }), /403/);
+  assert.equal(forbidden.requests.length, 1);
 });
