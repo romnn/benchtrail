@@ -561,9 +561,11 @@ main {
   height: 112px;
 }
 
+/* At most two charts side by side: a column is never narrower than half the row, and below twice
+   its smallest width the charts stack in one. */
 .charts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, max(460px, calc((100% - 48px) / 2))), 1fr));
   gap: 56px 48px;
 }
 
@@ -701,7 +703,7 @@ main {
 
 .multiples {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, max(340px, calc((100% - 48px) / 2))), 1fr));
   gap: 48px 48px;
   margin-top: 24px;
 }
