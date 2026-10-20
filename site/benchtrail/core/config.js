@@ -27,6 +27,7 @@ import { SMOOTHING } from "./link.js";
  * @typedef {object} Settings
  * @property {string} [names] a regular expression whose named groups read an untyped name
  * @property {string} [label] a template for a benchmark's label
+ * @property {string} [lineLabel] a template for a line's label inside its chart
  * @property {Map<string, MetricSettings>} [metrics]
  * @property {Map<string, DimensionSettings>} [dimensions]
  * @property {string} [colorBy]
@@ -63,6 +64,7 @@ import { SMOOTHING } from "./link.js";
  * @typedef {object} SuiteSettings
  * @property {RegExp | null} names
  * @property {string | null} label
+ * @property {string | null} lineLabel
  * @property {Map<string, MetricSettings>} metrics
  * @property {Map<string, DimensionSettings>} dimensions
  * @property {string | null} colorBy
@@ -180,6 +182,7 @@ function readSettings(raw, at, report) {
         break;
       }
       case "label":
+      case "lineLabel":
       case "colorBy":
       case "dashBy": {
         const checked = text(value, path, report);
@@ -255,6 +258,7 @@ export function suiteSettings(config, name) {
   return {
     names: merged.names === undefined ? null : new RegExp(merged.names),
     label: merged.label ?? null,
+    lineLabel: merged.lineLabel ?? null,
     metrics: mergeEntries(config.defaults.metrics, own.metrics),
     dimensions: mergeEntries(config.defaults.dimensions, own.dimensions),
     colorBy: merged.colorBy ?? null,

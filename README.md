@@ -203,6 +203,10 @@ The remaining keys apply to every suite at the top level, or to one suite under 
 - `names` is a regular expression whose named groups read dimensions out of an untyped benchmark
   name; a group called `metric` names the metric.
 - `label` is a template for a benchmark's label.
+- `lineLabel` is a template for a line's label inside its chart, whose title already names the
+  dimensions that split the charts, such as `{{profile}} ({{cpu}})`.
+  An environment name the line's metric splits by reads as `unknown` where it was not recorded; a
+  template that names anything else the line lacks gives way to its color and dash values.
 - `metrics` maps a metric id to `{ "label", "direction": "lower" | "higher", "unit", "order",
   "splitEnvironment", "ignoreEnvironment" }`.
   Charts follow `order`, lower first, then the order the metrics first appear in.

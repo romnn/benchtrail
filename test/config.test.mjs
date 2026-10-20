@@ -18,6 +18,7 @@ test("settings that hold are kept as given", () => {
     },
     dimensions: { document: { label: "Document", order: 1 } },
     colorBy: "document",
+    lineLabel: "{{document}}",
     ignoreEnvironment: ["rustc"],
     splitEnvironment: ["cpu"],
     smoothing: 5,
@@ -32,6 +33,7 @@ test("settings that hold are kept as given", () => {
   assert.deepEqual(settings.metrics.get("instructions"), { order: -1, splitEnvironment: [], ignoreEnvironment: ["cpu"] });
   assert.equal(settings.dimensions.get("document").order, 1);
   assert.deepEqual([...settings.ignoreEnvironment], ["rustc"]);
+  assert.equal(settings.lineLabel, "{{document}}");
   assert.deepEqual([...settings.splitEnvironment], ["cpu"]);
   assert.equal(settings.smoothing, 5);
 });

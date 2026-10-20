@@ -4,7 +4,7 @@
 // no part of the page can show one trace's observation as another's.
 
 import { median, relative } from "./detect.js";
-import { valueText } from "./history.js";
+import { fillLabel, valueText } from "./history.js";
 import { linkPart, token, unlinkPart, urlText } from "./identity.js";
 import { admits, RANGES } from "./link.js";
 import { compareOrder, unique } from "./list.js";
@@ -349,13 +349,16 @@ export function choosePivot(section, link) {
 // dimension, both by the value's fixed position, so filtering never repaints the lines that stay.
 // A trace the dimension does not apply to takes the position after every value, so it never
 // looks like one of them, and its label leaves the dimension out.
+// The label is the `lineLabel` template when it fits the trace, otherwise the color and dash
+// values.
 /**
  * @param {Trace} trace
  * @param {Pivot} pivot
  * @param {Map<string, Dimension>} dimsByKey
+ * @param {string | null} template the `lineLabel` setting
  * @returns {LineStyle}
  */
-function lineStyle(trace, pivot, dimsByKey) {
+function lineStyle(trace, pivot, dimsByKey, template) {
   const colorDim = pivot.color ? dimsByKey.get(pivot.color) : undefined;
   const dashDim = pivot.dash ? dimsByKey.get(pivot.dash) : undefined;
   const position = (/** @type {Dimension | undefined} */ d) => {
@@ -372,7 +375,7 @@ function lineStyle(trace, pivot, dimsByKey) {
     colorIndex,
     dashIndex,
     dash: DASHES[dashIndex % DASHES.length],
-    label: parts.join(" / ") || trace.label,
+    label: fillLabel(template, trace) ?? (parts.join(" / ") || trace.label),
   };
 }
 
@@ -477,7 +480,7 @@ export function buildView(suites, link) {
       label: facetDims.flatMap((d, i) => (facetValues[i] ? [valueText(d, facetValues[i].value)] : [])).join(" / "),
       order: facetValues.map((v, i) => v?.index ?? facetDims[i].values.length),
     };
-    lines.push(makeLine(trace, points, lineStyle(trace, pivot, dimsByKey), facet));
+    lines.push(makeLine(trace, points, lineStyle(trace, pivot, dimsByKey, section.settings.lineLabel), facet));
   }
   // Lines sort by facet, then color, then dash, so tables read in the same order as the charts.
   lines.sort((a, b) => compareOrder(a.facet.order, b.facet.order) || a.style.colorIndex - b.style.colorIndex || a.style.dashIndex - b.style.dashIndex);

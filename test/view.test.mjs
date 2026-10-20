@@ -191,6 +191,25 @@ test("a dimension that does not apply to a line neither filters it nor colors it
   );
 });
 
+test("a line label template names a line inside its chart, unknown where a split name is unrecorded", () => {
+  const run = (/** @type {string | undefined} */ cpu) =>
+    ["full", "lean"].map((profile) => entry(`run ${profile}`, 1, { dimensions: { doc: "a", profile }, ...(cpu ? { environment: { cpu } } : {}) }));
+  const s = suites(
+    { main: [run(undefined), run("x86")] },
+    { splitEnvironment: ["cpu"], lineLabel: "{{profile}} ({{cpu}})", colorBy: "cpu", dashBy: "profile" },
+  );
+  assert.deepEqual(
+    buildView(s, parseLink("")).lines.map((line) => line.style.label),
+    ["full (x86)", "lean (x86)", "full (unknown)", "lean (unknown)"],
+  );
+  // A template naming what a line lacks gives way to its color and dash values.
+  const other = suites({ main: [run("x86")] }, { lineLabel: "{{threads}}" });
+  assert.deepEqual(
+    buildView(other, parseLink("")).lines.map((line) => line.style.label),
+    ["full", "lean"],
+  );
+});
+
 test("a chart page names its suite and section, since its chart belongs to them", () => {
   assert.equal(formatLink(settle(SPLIT, parseLink("?chart=time"))), "chart=time&suite=main&section=doc,threads");
   assert.equal(formatLink(settle(SPLIT, parseLink("?page=runs&suite=main"))), "page=runs");

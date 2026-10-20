@@ -806,16 +806,27 @@ function traceIdentity(trace) {
  * @param {Section} section
  */
 function traceLabel(trace, section) {
-  const template = section.settings.label;
-  const split = trace.history.metric.split;
-  if (template) {
-    const names = [...template.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
-    if (names.length && names.every((name) => Object.hasOwn(trace.dims, name) || split.has(name))) {
-      return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, name) => (Object.hasOwn(trace.dims, name) ? String(trace.dims[name]) : "unknown"));
-    }
-  }
+  const filled = fillLabel(section.settings.label, trace);
+  if (filled !== null) return filled;
   const parts = section.dims.filter((d) => d.varying && !trace.inapplicable.has(d.key)).map((d) => valueText(d, trace.dims[d.key]));
   return parts.join(" / ") || trace.history.name;
+}
+
+// A label template filled with a trace's values, or null when the template names something other
+// than the trace's dimensions and the environment names its metric splits by, which read as
+// unknown in a trace recorded without them.
+/**
+ * @param {string | null} template
+ * @param {Trace} trace
+ * @returns {string | null}
+ */
+export function fillLabel(template, trace) {
+  if (!template) return null;
+  const pattern = /\{\{\s*([^}]+?)\s*\}\}/g;
+  const names = [...template.matchAll(pattern)].map((m) => m[1]);
+  const known = (/** @type {string} */ name) => Object.hasOwn(trace.dims, name) || trace.history.metric.split.has(name);
+  if (!names.length || !names.every(known)) return null;
+  return template.replace(pattern, (_, name) => (Object.hasOwn(trace.dims, name) ? String(trace.dims[name]) : "unknown"));
 }
 
 /**
