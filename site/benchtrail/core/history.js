@@ -349,11 +349,26 @@ export function buildSuite(name, rawRuns, settings, threshold) {
     }
   }
 
-  // Group the observations into metrics and histories, in order of first appearance.
+  // A split name applies only to metrics that record it somewhere in the loaded history.
+  // Missing values within those metrics remain unknown, including runs before it was recorded.
   /** @type {Map<string, Metric>} */
   const metrics = new Map();
   /** @type {Map<string, History>} */
   const histories = new Map();
+  /** @type {Map<Metric, Set<string>>} */
+  const recorded = new Map();
+  for (const read of observations) {
+    const metric = metricFor(metrics, read.metricId, read.unit, settings);
+    let keys = recorded.get(metric);
+    if (!keys) {
+      keys = new Set();
+      recorded.set(metric, keys);
+    }
+    for (const key of [...Object.keys(read.environment), ...Object.keys(read.dimensions)]) keys.add(key);
+  }
+  for (const [metric, keys] of recorded) metric.split = new Set([...metric.split].filter((key) => keys.has(key)));
+
+  // Group the observations into histories, in order of first appearance.
   for (const read of observations) {
     const metric = metricFor(metrics, read.metricId, read.unit, settings);
     const o = splitEnvironment(read, metric.split, String(read.entry.name ?? ""), note);

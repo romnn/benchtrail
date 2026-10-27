@@ -1,18 +1,28 @@
-// Captures the dashboard over the sample history as the README's hero images, in light and dark.
+// Captures the sample dashboard or an installed site, in light and dark.
 //
-// Usage: node scripts/screenshot.mjs
+// Usage: node scripts/screenshot.mjs [--root DIR --path PATH] [--out DIR] [--full-page]
 //
-// It needs `sample/data.js` (`task samples`) and Playwright's Chromium (`task screenshot:setup`).
+// By default it needs `sample/data.js` (`task samples`); --root serves an installed dashboard.
+// It needs Playwright's Chromium (`task screenshot:setup`).
 // The page loads ECharts from its CDN, so the capture also needs network access.
 
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { chromium } from "playwright";
 import { serve } from "./serve.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const OUT = join(ROOT, "docs");
+const { values } = parseArgs({
+  options: {
+    root: { type: "string" },
+    path: { type: "string" },
+    out: { type: "string" },
+    "full-page": { type: "boolean", default: false },
+  },
+});
+const OUT = values.out ? resolve(values.out) : join(ROOT, "docs");
 const VIEWPORT = { width: 1440, height: 900 };
 // The sample history is a script of about 40 MB, which the page parses before it renders anything.
 const LOAD_TIMEOUT = 180_000;
@@ -26,13 +36,13 @@ const SHOTS = [
   { colorScheme: "dark", file: "hero-dark.png" },
 ];
 
-if (!existsSync(join(ROOT, "sample", "data.js"))) {
+if (!values.root && !existsSync(join(ROOT, "sample", "data.js"))) {
   console.error("sample/data.js is missing; run `task samples` first.");
   process.exit(1);
 }
 mkdirSync(OUT, { recursive: true });
 
-const server = await serve({ root: ROOT });
+const server = await serve({ root: values.root ? resolve(values.root) : ROOT });
 const browser = await chromium.launch();
 try {
   for (const shot of SHOTS) {
@@ -44,8 +54,11 @@ try {
     page.on("console", (message) => {
       if (message.type() === "error") errors.push(message.text());
     });
-    // The changes list starts open, so the image leads with the regressions and improvements.
-    await page.goto(`${server.url}site/?data=../sample/data.js&changes=open`, { waitUntil: "load", timeout: LOAD_TIMEOUT });
+    // The default capture opens the changes list to lead with regressions and improvements.
+    await page.goto(new URL(values.path ?? "site/?data=../sample/data.js&changes=open", server.url).href, {
+      waitUntil: "load",
+      timeout: LOAD_TIMEOUT,
+    });
 
     // The page either draws its charts or movers table, or reports why it could not.
     await page.waitForSelector("#charts .chart svg, #charts .movers-table, #problem:not([hidden]), #failure:not([hidden])", {
@@ -61,7 +74,7 @@ try {
     }
     if (errors.length > 0) throw new Error(`the page reported errors: ${errors.join("; ")}`);
     const path = join(OUT, shot.file);
-    await page.screenshot({ path });
+    await page.screenshot({ path, fullPage: values["full-page"] });
     console.log(`wrote ${path}`);
     await context.close();
   }

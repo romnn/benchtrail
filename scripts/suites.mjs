@@ -1,11 +1,11 @@
-// Merges and drops suites of a recorded history, for a one-off cleanup of the storage branch, such
-// as folding a suite that a benchmark no longer records into the one it records now.
+// Cleans a recorded history: merges or drops suites and removes environment keys from metrics.
 //
-// Usage: node scripts/suites.mjs <data.js> [--merge FROM=INTO]... [--drop NAME]...
+// Usage: node scripts/suites.mjs <data.js> [--merge FROM=INTO]... [--drop NAME]... [--remove-environment METRIC=KEY]...
 //
-// The file is rewritten in place in github-action-benchmark's layout. Merges run before drops, each
-// in the order given; a suite a step names that the history lacks fails the whole run, which then
-// writes nothing.
+// The file is rewritten in place in github-action-benchmark's layout.
+// Merges run before drops, then environment removals, each in the order given.
+// A missing suite fails the whole run without writing; environment removal tolerates absent keys
+// and metrics, so it can be applied repeatedly to a growing history.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -22,7 +22,7 @@ const PREFIX = "window.BENCHMARK_DATA = ";
 
 /**
  * One step of a cleanup.
- * @typedef {{ kind: "merge", from: string, into: string } | { kind: "drop", name: string }} Step
+ * @typedef {{ kind: "merge", from: string, into: string } | { kind: "drop", name: string } | { kind: "remove-environment", metric: string, key: string }} Step
  */
 
 /**
@@ -30,6 +30,7 @@ const PREFIX = "window.BENCHMARK_DATA = ";
  * A merge appends each run's entries of `from` to the run of `into` that recorded the same commit
  * nearest in time, or adds the run to `into` in date order when `into` has no run of that commit,
  * and then removes `from`.
+ * Environment removal changes only the named key in matching version-1 typed entries.
  * @param {History} history
  * @param {readonly Step[]} steps
  * @returns {History}
@@ -43,6 +44,26 @@ export function applySteps(history, steps) {
     return entries[name];
   };
   for (const step of steps) {
+    if (step.kind === "remove-environment") {
+      for (const runs of Object.values(entries)) {
+        for (const run of runs) {
+          for (const bench of run.benches ?? []) {
+            if (typeof bench.extra !== "string") continue;
+            let extra;
+            try {
+              extra = JSON.parse(bench.extra);
+            } catch {
+              continue;
+            }
+            const typed = extra?.benchtrail;
+            if (typed?.version !== 1 || typed.metric?.id !== step.metric || !Object.hasOwn(typed.environment ?? {}, step.key)) continue;
+            delete typed.environment[step.key];
+            bench.extra = JSON.stringify(extra);
+          }
+        }
+      }
+      continue;
+    }
     if (step.kind === "drop") {
       need(step.name);
       delete entries[step.name];
@@ -76,6 +97,8 @@ export function readSteps(args) {
   const merges = [];
   /** @type {Step[]} */
   const drops = [];
+  /** @type {Step[]} */
+  const removals = [];
   for (let i = 0; i < args.length; i += 2) {
     const [flag, value] = [args[i], args[i + 1]];
     if (value === undefined) throw new Error(`${flag} needs a value`);
@@ -84,9 +107,13 @@ export function readSteps(args) {
       const at = value.indexOf("=");
       if (at <= 0 || at === value.length - 1) throw new Error(`--merge needs FROM=INTO, not ${JSON.stringify(value)}`);
       merges.push({ kind: "merge", from: value.slice(0, at), into: value.slice(at + 1) });
+    } else if (flag === "--remove-environment") {
+      const at = value.indexOf("=");
+      if (at <= 0 || at === value.length - 1) throw new Error(`--remove-environment needs METRIC=KEY, not ${JSON.stringify(value)}`);
+      removals.push({ kind: "remove-environment", metric: value.slice(0, at), key: value.slice(at + 1) });
     } else throw new Error(`unknown option ${flag}`);
   }
-  return [...merges, ...drops];
+  return [...merges, ...drops, ...removals];
 }
 
 /**
@@ -113,7 +140,7 @@ export function formatHistory(history) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [file, ...args] = process.argv.slice(2);
   if (!file) {
-    console.error("usage: node scripts/suites.mjs <data.js> [--merge FROM=INTO]... [--drop NAME]...");
+    console.error("usage: node scripts/suites.mjs <data.js> [--merge FROM=INTO]... [--drop NAME]... [--remove-environment METRIC=KEY]...");
     process.exit(2);
   }
   try {

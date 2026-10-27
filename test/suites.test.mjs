@@ -54,3 +54,31 @@ test("a history reads and writes back in github-action-benchmark's layout", () =
   assert.equal(formatHistory(parseHistory(text)), text);
   assert.throws(() => parseHistory("window.OTHER = {}"), /no benchmark history/);
 });
+
+test("environment removal is metric-specific, preserves values and metadata, and is idempotent", () => {
+  const typed = (metric, cpu = "arm") =>
+    JSON.stringify({
+      benchtrail: { version: 1, metric: { id: metric }, dimensions: { chart: "redis" }, environment: { rustc: "1", cpu } },
+      text: "host arm",
+      other: { preserved: true },
+    });
+  /** @type {import("../scripts/suites.mjs").History} */
+  const history = structuredClone(HISTORY);
+  history.entries.main[0].benches = [
+    { name: "rss", unit: "MiB", value: 42, extra: typed("rss") },
+    { name: "cpu", unit: "s", value: 1, extra: typed("cpu") },
+    { name: "plain", unit: "s", value: 2, extra: "not JSON" },
+  ];
+  const steps = readSteps(["--remove-environment", "rss=cpu", "--remove-environment", "absent=cpu"]);
+  const rewritten = applySteps(history, steps);
+  const expected = structuredClone(history);
+  const extra = JSON.parse(expected.entries.main[0].benches[0].extra);
+  delete extra.benchtrail.environment.cpu;
+  expected.entries.main[0].benches[0].extra = JSON.stringify(extra);
+  assert.deepEqual(rewritten, expected);
+  assert.equal(JSON.parse(history.entries.main[0].benches[0].extra).benchtrail.environment.cpu, "arm");
+  assert.equal(formatHistory(applySteps(rewritten, steps)), formatHistory(rewritten));
+  assert.throws(() => readSteps(["--remove-environment", "rss"]), /METRIC=KEY/);
+  assert.throws(() => readSteps(["--remove-environment", "=cpu"]), /METRIC=KEY/);
+  assert.throws(() => readSteps(["--remove-environment", "rss="]), /METRIC=KEY/);
+});

@@ -223,7 +223,10 @@ The remaining keys apply to every suite at the top level, or to one suite under 
   such as the CPU model of a pool of hosted runners whose hardware changes from run to run.
   Each value then has its own history and change detection, and the name works as a dimension in
   filters, `colorBy`, `dashBy`, `label`, and links.
-  Runs recorded before the name was show as `unknown`, in a series of their own.
+  A name applies only to metrics that record it in at least one loaded run (as environment or a
+  dimension); metrics that never record it leave it out of filters, colors and labels.
+  Within a metric that records it, runs recorded before the name was show as `unknown`, in a
+  series of their own.
 - `range` is how many of the newest runs the page shows until the reader picks another range:
   `30`, `50` (the default), `100`, or `"all"`.
   The range buttons widen it, and a link keeps the reader's choice as `?runs=`.
@@ -266,6 +269,17 @@ git commit -am "Fold the old suite into the new one" && git push
 A merge appends each run's entries of the first suite to the run of the second that recorded the
 same commit, adds the runs of other commits in date order, and removes the first suite.
 Run it while no benchmark is recording, since each recording rewrites the file.
+
+A metric that should compare across an environment key can remove it from old entries:
+
+```sh
+node /path/to/benchtrail/scripts/suites.mjs dev/bench/data.js --remove-environment peak-rss=cpu
+```
+
+This removes only the named environment key from matching version-1 typed entries across all
+suites, retaining values and other metadata.
+It tolerates missing keys and metrics and is idempotent, so it can be reapplied to the latest
+storage-branch head before publishing; update the producer too so new entries keep that policy.
 
 ## Typed benchmarks
 

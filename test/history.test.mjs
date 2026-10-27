@@ -218,3 +218,30 @@ test("a metric's own environment lists replace the suite's, and its order places
   // The times still split by CPU, with the runs from before it was recorded as unknown.
   assert.equal(section.traces.filter((t) => t.history.metric.id === "cpu").length, 3);
 });
+
+test("a split name absent from a metric is inapplicable, while compiler changes still segment it", () => {
+  const runs = pool().map(([time], i) => [
+    time,
+    entry(
+      "memory",
+      100,
+      {
+        benchmarkId: "memory",
+        dimensions: { chart: "a" },
+        metric: { id: "rss" },
+        environment: { rustc: i < 13 ? "1.99.0" : "1.100.0" },
+      },
+      "MiB",
+    ),
+  ]);
+  const s = suite(runs, { splitEnvironment: ["cpu"], label: "{{chart}} ({{cpu}})" });
+  const memory = traces(s).filter((t) => t.history.metric.id === "rss");
+  assert.equal(memory.length, 1);
+  assert.equal(memory[0].own.size, 26);
+  assert.deepEqual([...memory[0].inapplicable], ["cpu"]);
+  assert.equal(memory[0].label, "memory");
+  assert.deepEqual(memory[0].history.segment, [...Array(13).fill(0), ...Array(13).fill(1)]);
+  assert.deepEqual(memory[0].history.boundary[13], ["rustc 1.99.0 → 1.100.0"]);
+  // Earlier time readings without CPU remain an unknown series alongside the two recorded CPUs.
+  assert.equal(traces(s).filter((t) => t.history.metric.id === "cpu").length, 3);
+});

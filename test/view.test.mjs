@@ -244,3 +244,36 @@ test("a chart page whose suite or section is gone shows nothing and keeps its li
   const sectioned = suites({ main: [[entry("a", 1, { dimensions: { doc: "a" } }), entry("b", 1, { dimensions: { os: "linux" } })]] });
   assert.equal(formatLink(settle(sectioned, parseLink("?suite=gone&section=os"))), "section=os");
 });
+
+test("metrics without CPU keep profile labels and survive CPU filters alongside split times", () => {
+  const run = (cpu) =>
+    ["full", "lean"].flatMap((profile) => [
+      entry(`time ${profile}`, 1, { dimensions: { chart: "redis", profile }, environment: { rustc: "1", cpu } }),
+      entry(`rss ${profile}`, 9, { dimensions: { chart: "redis", profile }, metric: { id: "rss" }, environment: { rustc: "1" } }),
+    ]);
+  const s = suites(
+    { main: [run("x86"), run("arm")] },
+    {
+      splitEnvironment: ["cpu"],
+      label: "{{chart}} / {{profile}} ({{cpu}})",
+      lineLabel: "{{profile}} ({{cpu}})",
+      colorBy: "cpu",
+      dashBy: "profile",
+    },
+  );
+  const labels = (query) => buildView(s, parseLink(query)).lines.map((line) => [line.metric.id, line.style.label]);
+  assert.deepEqual(labels(""), [
+    ["time", "full (x86)"],
+    ["time", "lean (x86)"],
+    ["time", "full (arm)"],
+    ["time", "lean (arm)"],
+    ["rss", "full"],
+    ["rss", "lean"],
+  ]);
+  assert.deepEqual(labels("?d.cpu=arm"), [
+    ["time", "full (arm)"],
+    ["time", "lean (arm)"],
+    ["rss", "full"],
+    ["rss", "lean"],
+  ]);
+});
